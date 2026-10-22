@@ -180,6 +180,27 @@ bool ACombatCharacter::IsStaggered() const
 	return GetWorld()->GetTimeSeconds() < StaggerEndTime;
 }
 
+void ACombatCharacter::AutoGuard()
+{
+	if (HasAuthority())
+	{
+		ServerAutoGuard_Implementation();
+	}
+	else
+	{
+		ServerAutoGuard();
+	}
+}
+
+void ACombatCharacter::ServerAutoGuard_Implementation()
+{
+#if !UE_BUILD_SHIPPING
+	bDebugAutoGuard = !bDebugAutoGuard;
+
+	ShowCombatDebugMessage(bDebugAutoGuard ? TEXT("Auto guard on") : TEXT("Auto guard off"), FColor::Green);
+#endif
+}
+
 void ACombatCharacter::Stagger(float Duration)
 {
 	if (HasAuthority())
@@ -601,8 +622,12 @@ void ACombatCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVe
 	// was the attack guarded?
 	if (IsFacingAttacker(DamageCauser))
 	{
+		// auto guard parries without a shield and blocks with one
+		const bool bAutoParry = bDebugAutoGuard && !bHasShield;
+		const bool bAutoBlock = bDebugAutoGuard && bHasShield;
+
 		// a parry stops the damage and staggers the attacker
-		if (GetWorld()->GetTimeSeconds() < ParryWindowEndTime)
+		if (bAutoParry || GetWorld()->GetTimeSeconds() < ParryWindowEndTime)
 		{
 			ParryWindowEndTime = 0.0f;
 
@@ -617,7 +642,7 @@ void ACombatCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVe
 		}
 
 		// a block reduces the damage
-		if (bIsBlocking)
+		if (bIsBlocking || bAutoBlock)
 		{
 			Damage *= BlockDamageMultiplier;
 

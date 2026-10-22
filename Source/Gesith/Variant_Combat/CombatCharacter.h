@@ -169,6 +169,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Guard|Parry", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
 	float ParryStaggerTime = 1.0f;
 
+	/** Testing aid: when true, every attack from the front is blocked, or parried without a shield. Server only */
+	bool bDebugAutoGuard = false;
+
 	/** Server time at which the current parry window closes */
 	float ParryWindowEndTime = 0.0f;
 
@@ -258,6 +261,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="Combat")
 	bool IsStaggered() const;
 
+	/** Console command for solo testing. Toggles guarding every attack from the front without holding the input */
+	UFUNCTION(Exec)
+	void AutoGuard();
+
 	/** Interrupts the current attack and stops the character from acting for a while. Server only */
 	void Stagger(float Duration);
 
@@ -311,6 +318,10 @@ protected:
 	/** Sends the blocking state to the server */
 	UFUNCTION(Server, Reliable)
 	void ServerSetBlocking(bool bNewBlocking);
+
+	/** Sends the auto guard toggle to the server */
+	UFUNCTION(Server, Reliable)
+	void ServerAutoGuard();
 
 	/** Sends a parry attempt to the server */
 	UFUNCTION(Server, Reliable)
