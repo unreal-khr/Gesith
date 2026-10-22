@@ -17,6 +17,8 @@
 #include "CombatPlayerController.h"
 #include "Net/UnrealNetwork.h"
 #include "Engine/Engine.h"
+#include "EngineUtils.h"
+#include "CombatSoldierAIController.h"
 
 ACombatCharacter::ACombatCharacter()
 {
@@ -51,6 +53,10 @@ ACombatCharacter::ACombatCharacter()
 
 	// set the player tag
 	Tags.Add(FName("Player"));
+
+	// blue and red life bars for the two teams
+	TeamColors.Add(FLinearColor(0.1f, 0.4f, 1.0f));
+	TeamColors.Add(FLinearColor(1.0f, 0.15f, 0.1f));
 }
 
 void ACombatCharacter::Move(const FInputActionValue& Value)
@@ -178,6 +184,161 @@ void ACombatCharacter::DoGuardEnd()
 bool ACombatCharacter::IsStaggered() const
 {
 	return GetWorld()->GetTimeSeconds() < StaggerEndTime;
+}
+
+bool ACombatCharacter::IsEnemyOf(const ACombatCharacter* Other) const
+{
+	return Other && TeamId != 0 && Other->TeamId != 0 && TeamId != Other->TeamId;
+}
+
+bool ACombatCharacter::IsAllyOf(const ACombatCharacter* Other) const
+{
+	return Other && TeamId != 0 && TeamId == Other->TeamId;
+}
+
+void ACombatCharacter::SetTeam(int32 NewTeamId)
+{
+	if (HasAuthority())
+	{
+		TeamId = NewTeamId;
+
+		OnRep_TeamId();
+	}
+}
+
+void ACombatCharacter::OnRep_TeamId()
+{
+	if (LifeBarWidget)
+	{
+		LifeBarWidget->SetBarColor(TeamColors.IsValidIndex(TeamId - 1) ? TeamColors[TeamId - 1] : LifeBarColor);
+	}
+}
+
+void ACombatCharacter::JoinTeam(int32 NewTeamId)
+{
+	if (HasAuthority())
+	{
+		ServerJoinTeam_Implementation(NewTeamId);
+	}
+	else
+	{
+		ServerJoinTeam(NewTeamId);
+	}
+}
+
+void ACombatCharacter::ServerJoinTeam_Implementation(int32 NewTeamId)
+{
+#if !UE_BUILD_SHIPPING
+	SetTeam(FMath::Clamp(NewTeamId, 0, TeamColors.Num()));
+
+	ShowCombatDebugMessage(FString::Printf(TEXT("Joined team %d"), TeamId), FColor::Green);
+#endif
+}
+
+void ACombatCharacter::SpawnBattle(int32 SoldiersPerTeam)
+{
+	if (HasAuthority())
+	{
+		ServerSpawnBattle_Implementation(SoldiersPerTeam);
+	}
+	else
+	{
+		ServerSpawnBattle(SoldiersPerTeam);
+	}
+}
+
+void ACombatCharacter::ServerSpawnBattle_Implementation(int32 SoldiersPerTeam)
+{
+#if !UE_BUILD_SHIPPING
+	// the field cap is 200 units, so 100 per team at most
+	SoldiersPerTeam = FMath::Clamp(SoldiersPerTeam, 1, 100);
+
+	// the two lines face each other, centered in front of the player
+	const FVector Forward = GetActorForwardVector().GetSafeNormal2D();
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, Forward);
+	const FVector Center = GetActorLocation() + Forward * (BattleLineGap * 0.5f + 300.0f);
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+	for (int32 Team = 1; Team <= 2; ++Team)
+	{
+		// team 1 is the near line, team 2 the far one
+		const FVector LineCenter = Center + Forward * (Team == 1 ? -0.5f : 0.5f) * BattleLineGap;
+		const FRotator Facing = (Team == 1 ? Forward : -Forward).Rotation();
+
+		for (int32 Index = 0; Index < SoldiersPerTeam; ++Index)
+		{
+			const float Offset = (Index - (SoldiersPerTeam - 1) * 0.5f) * BattleLineSpacing;
+			const FVector Location = LineCenter + Right * Offset;
+
+			// soldiers use the same Blueprint as the player, so they get the same mesh, animations and combat code
+			ACombatCharacter* Soldier = GetWorld()->SpawnActor<ACombatCharacter>(GetClass(), Location, Facing, SpawnParams);
+
+			if (!Soldier)
+			{
+				continue;
+			}
+
+			if (ACombatSoldierAIController* SoldierAI = GetWorld()->SpawnActor<ACombatSoldierAIController>())
+			{
+				SoldierAI->Possess(Soldier);
+			}
+
+			Soldier->SetTeam(Team);
+		}
+	}
+
+	ShowBattleStatus();
+#endif
+}
+
+void ACombatCharacter::ClearBattle()
+{
+	if (HasAuthority())
+	{
+		ServerClearBattle_Implementation();
+	}
+	else
+	{
+		ServerClearBattle();
+	}
+}
+
+void ACombatCharacter::ServerClearBattle_Implementation()
+{
+#if !UE_BUILD_SHIPPING
+	for (TActorIterator<ACombatCharacter> It(GetWorld()); It; ++It)
+	{
+		if (Cast<ACombatSoldierAIController>(It->GetController()) || (!It->IsPlayerControlled() && It->TeamId != 0))
+		{
+			It->Destroy();
+		}
+	}
+#endif
+}
+
+void ACombatCharacter::ShowBattleStatus() const
+{
+#if !UE_BUILD_SHIPPING
+	if (!GEngine || !HasAuthority())
+	{
+		return;
+	}
+
+	int32 Alive[3] = { 0, 0, 0 };
+
+	for (TActorIterator<ACombatCharacter> It(GetWorld()); It; ++It)
+	{
+		if (!It->IsDead() && It->TeamId >= 1 && It->TeamId <= 2)
+		{
+			++Alive[It->TeamId];
+		}
+	}
+
+	// a fixed key replaces the previous status line instead of stacking
+	GEngine->AddOnScreenDebugMessage(0x6E5174, 10.0f, FColor::Green, FString::Printf(TEXT("Battle: team 1 has %d alive, team 2 has %d alive"), Alive[1], Alive[2]));
+#endif
 }
 
 void ACombatCharacter::AutoGuard()
@@ -421,8 +582,8 @@ void ACombatCharacter::MulticastJumpToComboSection_Implementation(int32 NewCombo
 void ACombatCharacter::ShowCombatDebugMessage(const FString& Message, const FColor& Color) const
 {
 #if !UE_BUILD_SHIPPING
-	// only the server prints, so each event shows up once
-	if (GEngine && HasAuthority())
+	// only the server prints, so each event shows up once. AI soldiers would flood the screen, so only players print
+	if (GEngine && HasAuthority() && IsPlayerControlled())
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 3.0f, Color, FString::Printf(TEXT("%s: %s"), *GetName(), *Message));
 	}
@@ -543,6 +704,12 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 			AActor* HitActor = CurrentHit.GetActor();
 
 			if (!HitActor || DamagedActors.Contains(HitActor))
+			{
+				continue;
+			}
+
+			// no friendly fire
+			if (IsAllyOf(Cast<ACombatCharacter>(HitActor)))
 			{
 				continue;
 			}
@@ -689,6 +856,12 @@ void ACombatCharacter::HandleDeath()
 	// ragdoll everywhere
 	MulticastDeath();
 
+	// keep count during team battles
+	if (TeamId != 0)
+	{
+		ShowBattleStatus();
+	}
+
 	// schedule respawning
 	GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &ACombatCharacter::RespawnCharacter, RespawnTime, false);
 }
@@ -755,8 +928,8 @@ void ACombatCharacter::BeginPlay()
 	// save the relative transform for the mesh so we can reset the ragdoll later
 	MeshStartingTransform = GetMesh()->GetRelativeTransform();
 
-	// set the life bar color
-	LifeBarWidget->SetBarColor(LifeBarColor);
+	// set the life bar color, using the team color if the team already replicated
+	OnRep_TeamId();
 
 	// save the walk speed so blocking can restore it
 	DefaultWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
@@ -822,4 +995,5 @@ void ACombatCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(ACombatCharacter, CurrentHP);
 
 	DOREPLIFETIME(ACombatCharacter, bIsBlocking);
+	DOREPLIFETIME(ACombatCharacter, TeamId);
 }
