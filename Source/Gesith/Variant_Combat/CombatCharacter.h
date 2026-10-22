@@ -290,6 +290,9 @@ protected:
 	/** Opens the parry window if the cooldown allows it. Server only */
 	void TryParry();
 
+	/** Prints a combat event on screen for testing. Does nothing in shipping builds */
+	void ShowCombatDebugMessage(const FString& Message, const FColor& Color) const;
+
 	/** Returns true if an attack coming from the provided actor is within the guard angle */
 	bool IsFacingAttacker(const AActor* Attacker) const;
 

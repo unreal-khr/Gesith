@@ -16,6 +16,7 @@
 #include "Engine/LocalPlayer.h"
 #include "CombatPlayerController.h"
 #include "Net/UnrealNetwork.h"
+#include "Engine/Engine.h"
 
 ACombatCharacter::ACombatCharacter()
 {
@@ -280,6 +281,11 @@ void ACombatCharacter::SetBlocking(bool bNewBlocking)
 		return;
 	}
 
+	if (bIsBlocking != bNewBlocking)
+	{
+		ShowCombatDebugMessage(bNewBlocking ? TEXT("Shield up") : TEXT("Shield down"), FColor::White);
+	}
+
 	bIsBlocking = bNewBlocking;
 
 	UpdateWalkSpeed();
@@ -311,6 +317,8 @@ void ACombatCharacter::TryParry()
 	{
 		return;
 	}
+
+	ShowCombatDebugMessage(TEXT("Parry attempt"), FColor::White);
 
 	// open the parry window
 	ParryWindowEndTime = Now + ParryWindow;
@@ -389,6 +397,17 @@ void ACombatCharacter::MulticastJumpToComboSection_Implementation(int32 NewCombo
 	}
 }
 
+void ACombatCharacter::ShowCombatDebugMessage(const FString& Message, const FColor& Color) const
+{
+#if !UE_BUILD_SHIPPING
+	// only the server prints, so each event shows up once
+	if (GEngine && HasAuthority())
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, Color, FString::Printf(TEXT("%s: %s"), *GetName(), *Message));
+	}
+#endif
+}
+
 void ACombatCharacter::MulticastDealtDamage_Implementation(float Damage, const FVector_NetQuantize& ImpactPoint)
 {
 	// call the BP handler to play effects, etc.
@@ -404,12 +423,16 @@ void ACombatCharacter::MulticastReceivedDamage_Implementation(float Damage, cons
 		GetMesh()->SetBodySimulatePhysics(PelvisBoneName, false);
 	}
 
+	ShowCombatDebugMessage(FString::Printf(TEXT("Hit for %.1f, HP %.1f / %.1f"), Damage, CurrentHP, MaxHP), FColor::Red);
+
 	// pass control to BP to play effects, etc.
 	ReceivedDamage(Damage, ImpactPoint, DamageDirection);
 }
 
 void ACombatCharacter::MulticastGuardedAttack_Implementation(bool bWasParried, const FVector_NetQuantize& ImpactPoint)
 {
+	ShowCombatDebugMessage(bWasParried ? TEXT("Parried!") : TEXT("Blocked"), bWasParried ? FColor::Yellow : FColor::Cyan);
+
 	// pass control to BP to play effects, etc.
 	GuardedAttack(bWasParried, ImpactPoint);
 }
@@ -432,12 +455,16 @@ void ACombatCharacter::MulticastStagger_Implementation(float Duration)
 
 	bIsAttacking = false;
 
+	ShowCombatDebugMessage(TEXT("Staggered"), FColor::Orange);
+
 	// pass control to BP to play effects, etc.
 	Staggered(Duration);
 }
 
 void ACombatCharacter::MulticastDeath_Implementation()
 {
+	ShowCombatDebugMessage(TEXT("Died"), FColor::Red);
+
 	// disable movement while we're dead
 	GetCharacterMovement()->DisableMovement();
 
