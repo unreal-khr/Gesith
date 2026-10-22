@@ -15,6 +15,7 @@
 #include "TimerManager.h"
 #include "Engine/LocalPlayer.h"
 #include "CombatPlayerController.h"
+#include "Net/UnrealNetwork.h"
 
 ACombatCharacter::ACombatCharacter()
 {
@@ -74,16 +75,16 @@ void ACombatCharacter::ComboAttackPressed()
 	DoComboAttackStart();
 }
 
-void ACombatCharacter::ChargedAttackPressed()
+void ACombatCharacter::GuardPressed()
 {
 	// route the input
-	DoChargedAttackStart();
+	DoGuardStart();
 }
 
-void ACombatCharacter::ChargedAttackReleased()
+void ACombatCharacter::GuardReleased()
 {
 	// route the input
-	DoChargedAttackEnd();
+	DoGuardEnd();
 }
 
 void ACombatCharacter::DoMove(float Right, float Forward)
@@ -118,6 +119,100 @@ void ACombatCharacter::DoLook(float Yaw, float Pitch)
 
 void ACombatCharacter::DoComboAttackStart()
 {
+	// clients tell the server, which runs the same logic and decides what hits
+	if (!HasAuthority())
+	{
+		ServerComboAttackInput();
+	}
+
+	// run the attack locally right away so the input feels responsive
+	HandleComboAttackInput();
+}
+
+void ACombatCharacter::DoComboAttackEnd()
+{
+	// stub
+}
+
+void ACombatCharacter::DoGuardStart()
+{
+	if (bHasShield)
+	{
+		// raise the shield locally, then tell the server
+		SetBlocking(true);
+
+		if (!HasAuthority())
+		{
+			ServerSetBlocking(true);
+		}
+	}
+	else
+	{
+		// parries are only judged on the server
+		if (HasAuthority())
+		{
+			TryParry();
+		}
+		else
+		{
+			ServerParry();
+		}
+	}
+}
+
+void ACombatCharacter::DoGuardEnd()
+{
+	if (bHasShield)
+	{
+		// lower the shield locally, then tell the server
+		SetBlocking(false);
+
+		if (!HasAuthority())
+		{
+			ServerSetBlocking(false);
+		}
+	}
+}
+
+bool ACombatCharacter::IsStaggered() const
+{
+	return GetWorld()->GetTimeSeconds() < StaggerEndTime;
+}
+
+void ACombatCharacter::Stagger(float Duration)
+{
+	if (HasAuthority())
+	{
+		MulticastStagger(Duration);
+	}
+}
+
+void ACombatCharacter::ResetHP()
+{
+	// reset the current HP total
+	CurrentHP = MaxHP;
+
+	// update the life bar
+	UpdateLifeBar();
+}
+
+void ACombatCharacter::UpdateLifeBar()
+{
+	// the HP may replicate before the widget exists
+	if (LifeBarWidget)
+	{
+		LifeBarWidget->SetLifePercentage(FMath::Clamp(CurrentHP / MaxHP, 0.0f, 1.0f));
+	}
+}
+
+void ACombatCharacter::HandleComboAttackInput()
+{
+	// ignore attack inputs while dead, staggered or holding up a shield
+	if (IsDead() || IsStaggered() || bIsBlocking)
+	{
+		return;
+	}
+
 	// are we already playing an attack animation?
 	if (bIsAttacking)
 	{
@@ -131,48 +226,6 @@ void ACombatCharacter::DoComboAttackStart()
 	ComboAttack();
 }
 
-void ACombatCharacter::DoComboAttackEnd()
-{
-	// stub
-}
-
-void ACombatCharacter::DoChargedAttackStart()
-{
-	// raise the charging attack flag
-	bIsChargingAttack = true;
-
-	if (bIsAttacking)
-	{
-		// cache the input time so we can check it later
-		CachedAttackInputTime = GetWorld()->GetTimeSeconds();
-
-		return;
-	}
-
-	ChargedAttack();
-}
-
-void ACombatCharacter::DoChargedAttackEnd()
-{
-	// lower the charging attack flag
-	bIsChargingAttack = false;
-
-	// if we've done the charge loop at least once, release the charged attack right away
-	if (bHasLoopedChargedAttack)
-	{
-		CheckChargedAttack();
-	}
-}
-
-void ACombatCharacter::ResetHP()
-{
-	// reset the current HP total
-	CurrentHP = MaxHP;
-
-	// update the life bar
-	LifeBarWidget->SetLifePercentage(1.0f);
-}
-
 void ACombatCharacter::ComboAttack()
 {
 	// raise the attacking flag
@@ -182,38 +235,26 @@ void ACombatCharacter::ComboAttack()
 	ComboCount = 0;
 
 	// play the attack montage
+	PlayComboAttackMontage();
+
+	// let the other machines see the attack
+	if (HasAuthority())
+	{
+		MulticastPlayComboAttack();
+	}
+}
+
+void ACombatCharacter::PlayComboAttackMontage()
+{
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 	{
-		const float MontageLength = AnimInstance->Montage_Play(ComboAttackMontage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, true);
+		const float MontageLength = AnimInstance->Montage_Play(ComboAttackMontage, AttackSpeed, EMontagePlayReturnType::MontageLength, 0.0f, true);
 
 		// subscribe to montage completed and interrupted events
 		if (MontageLength > 0.0f)
 		{
 			// set the end delegate for the montage
 			AnimInstance->Montage_SetEndDelegate(OnAttackMontageEnded, ComboAttackMontage);
-		}
-	}
-
-}
-
-void ACombatCharacter::ChargedAttack()
-{
-	// raise the attacking flag
-	bIsAttacking = true;
-
-	// reset the charge loop flag
-	bHasLoopedChargedAttack = false;
-
-	// play the charged attack montage
-	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
-	{
-		const float MontageLength = AnimInstance->Montage_Play(ChargedAttackMontage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, true);
-
-		// subscribe to montage completed and interrupted events
-		if (MontageLength > 0.0f)
-		{
-			// set the end delegate for the montage
-			AnimInstance->Montage_SetEndDelegate(OnAttackMontageEnded, ChargedAttackMontage);
 		}
 	}
 }
@@ -226,22 +267,203 @@ void ACombatCharacter::AttackMontageEnded(UAnimMontage* Montage, bool bInterrupt
 	// check if we have a non-stale cached input
 	if (GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= AttackInputCacheTimeTolerance)
 	{
-		// are we holding the charged attack button?
-		if (bIsChargingAttack)
+		// do another attack
+		HandleComboAttackInput();
+	}
+}
+
+void ACombatCharacter::SetBlocking(bool bNewBlocking)
+{
+	// can't raise the shield while dead, staggered or attacking
+	if (bNewBlocking && (IsDead() || IsStaggered() || bIsAttacking))
+	{
+		return;
+	}
+
+	bIsBlocking = bNewBlocking;
+
+	UpdateWalkSpeed();
+}
+
+void ACombatCharacter::UpdateWalkSpeed()
+{
+	// the walk speed isn't known until BeginPlay
+	if (DefaultWalkSpeed <= 0.0f)
+	{
+		return;
+	}
+
+	// slow down while the shield is up
+	GetCharacterMovement()->MaxWalkSpeed = bIsBlocking ? DefaultWalkSpeed * BlockWalkSpeedMultiplier : DefaultWalkSpeed;
+}
+
+void ACombatCharacter::TryParry()
+{
+	if (IsDead() || IsStaggered())
+	{
+		return;
+	}
+
+	const float Now = GetWorld()->GetTimeSeconds();
+
+	// is the parry still on cooldown?
+	if (Now < NextParryTime)
+	{
+		return;
+	}
+
+	// open the parry window
+	ParryWindowEndTime = Now + ParryWindow;
+	NextParryTime = Now + ParryCooldown;
+}
+
+bool ACombatCharacter::IsFacingAttacker(const AActor* Attacker) const
+{
+	if (!Attacker)
+	{
+		return false;
+	}
+
+	// compare our facing with the flat direction to the attacker
+	const FVector ToAttacker = (Attacker->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+
+	return FVector::DotProduct(GetActorForwardVector().GetSafeNormal2D(), ToAttacker) >= FMath::Cos(FMath::DegreesToRadians(GuardAngle));
+}
+
+void ACombatCharacter::OnRep_CurrentHP()
+{
+	UpdateLifeBar();
+}
+
+void ACombatCharacter::OnRep_IsBlocking()
+{
+	// the server has the final say, so the owner gets corrected here too
+	UpdateWalkSpeed();
+}
+
+void ACombatCharacter::ServerComboAttackInput_Implementation()
+{
+	HandleComboAttackInput();
+}
+
+void ACombatCharacter::ServerSetBlocking_Implementation(bool bNewBlocking)
+{
+	SetBlocking(bNewBlocking);
+}
+
+void ACombatCharacter::ServerParry_Implementation()
+{
+	TryParry();
+}
+
+void ACombatCharacter::MulticastPlayComboAttack_Implementation()
+{
+	// the server and the owner already started the attack themselves
+	if (HasAuthority() || IsLocallyControlled())
+	{
+		return;
+	}
+
+	bIsAttacking = true;
+	ComboCount = 0;
+
+	PlayComboAttackMontage();
+}
+
+void ACombatCharacter::MulticastJumpToComboSection_Implementation(int32 NewComboCount)
+{
+	// the server and the owner run their own combo checks
+	if (HasAuthority() || IsLocallyControlled())
+	{
+		return;
+	}
+
+	ComboCount = NewComboCount;
+
+	if (ComboSectionNames.IsValidIndex(ComboCount))
+	{
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 		{
-			// do a charged attack
-			ChargedAttack();
-		}
-		else
-		{
-			// do a regular attack
-			ComboAttack();
+			AnimInstance->Montage_JumpToSection(ComboSectionNames[ComboCount], ComboAttackMontage);
 		}
 	}
 }
 
+void ACombatCharacter::MulticastDealtDamage_Implementation(float Damage, const FVector_NetQuantize& ImpactPoint)
+{
+	// call the BP handler to play effects, etc.
+	DealtDamage(Damage, ImpactPoint);
+}
+
+void ACombatCharacter::MulticastReceivedDamage_Implementation(float Damage, const FVector_NetQuantize& ImpactPoint, const FVector_NetQuantizeNormal& DamageDirection)
+{
+	// enable partial ragdoll physics, but keep the pelvis vertical
+	if (!IsDead())
+	{
+		GetMesh()->SetPhysicsBlendWeight(0.5f);
+		GetMesh()->SetBodySimulatePhysics(PelvisBoneName, false);
+	}
+
+	// pass control to BP to play effects, etc.
+	ReceivedDamage(Damage, ImpactPoint, DamageDirection);
+}
+
+void ACombatCharacter::MulticastGuardedAttack_Implementation(bool bWasParried, const FVector_NetQuantize& ImpactPoint)
+{
+	// pass control to BP to play effects, etc.
+	GuardedAttack(bWasParried, ImpactPoint);
+}
+
+void ACombatCharacter::MulticastStagger_Implementation(float Duration)
+{
+	StaggerEndTime = GetWorld()->GetTimeSeconds() + Duration;
+
+	// consume any cached input so the interrupted attack doesn't restart
+	CachedAttackInputTime = 0.0f;
+
+	// lower the shield
+	SetBlocking(false);
+
+	// interrupt the attack
+	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+	{
+		AnimInstance->Montage_Stop(0.1f, ComboAttackMontage);
+	}
+
+	bIsAttacking = false;
+
+	// pass control to BP to play effects, etc.
+	Staggered(Duration);
+}
+
+void ACombatCharacter::MulticastDeath_Implementation()
+{
+	// disable movement while we're dead
+	GetCharacterMovement()->DisableMovement();
+
+	// enable full ragdoll physics
+	GetMesh()->SetSimulatePhysics(true);
+
+	// hide the life bar
+	LifeBar->SetHiddenInGame(true);
+
+	// pull back the camera
+	GetCameraBoom()->TargetArmLength = DeathCameraDistance;
+}
+
+void ACombatCharacter::ClientApplyKnockback_Implementation(const FVector& DamageImpulse)
+{
+	GetCharacterMovement()->AddImpulse(DamageImpulse, true);
+}
+
 void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 {
+	// only the server decides what gets hit
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	// sweep for objects in front of the character to be hit by the attack
 	TArray<FHitResult> OutHits;
 
@@ -264,22 +486,40 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 
 	if (GetWorld()->SweepMultiByObjectType(OutHits, TraceStart, TraceEnd, FQuat::Identity, ObjectParams, CollisionShape, QueryParams))
 	{
+		// a sweep can return several hits on the same actor, only damage each once
+		TSet<AActor*> DamagedActors;
+
 		// iterate over each object hit
 		for (const FHitResult& CurrentHit : OutHits)
 		{
+			AActor* HitActor = CurrentHit.GetActor();
+
+			if (!HitActor || DamagedActors.Contains(HitActor))
+			{
+				continue;
+			}
+
 			// check if we've hit a damageable actor
-			ICombatDamageable* Damageable = Cast<ICombatDamageable>(CurrentHit.GetActor());
+			ICombatDamageable* Damageable = Cast<ICombatDamageable>(HitActor);
 
 			if (Damageable)
 			{
+				DamagedActors.Add(HitActor);
+
 				// knock upwards and away from the impact normal
 				const FVector Impulse = (CurrentHit.ImpactNormal * -MeleeKnockbackImpulse) + (FVector::UpVector * MeleeLaunchImpulse);
 
 				// pass the damage event to the actor
 				Damageable->ApplyDamage(MeleeDamage, this, CurrentHit.ImpactPoint, Impulse);
 
-				// call the BP handler to play effects, etc.
-				DealtDamage(MeleeDamage, CurrentHit.ImpactPoint);
+				// play effects on every machine
+				MulticastDealtDamage(MeleeDamage, CurrentHit.ImpactPoint);
+			}
+
+			// stop hitting things if a parry interrupted this attack
+			if (IsStaggered())
+			{
+				break;
 			}
 		}
 	}
@@ -287,8 +527,8 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 
 void ACombatCharacter::CheckCombo()
 {
-	// are we playing a non-charge attack animation?
-	if (bIsAttacking && !bIsChargingAttack)
+	// are we playing an attack animation?
+	if (bIsAttacking)
 	{
 		// is the last attack input not stale?
 		if (GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= ComboInputCacheTimeTolerance)
@@ -307,6 +547,12 @@ void ACombatCharacter::CheckCombo()
 				{
 					AnimInstance->Montage_JumpToSection(ComboSectionNames[ComboCount], ComboAttackMontage);
 				}
+
+				// let the other machines follow the combo
+				if (HasAuthority())
+				{
+					MulticastJumpToComboSection(ComboCount);
+				}
 			}
 		}
 	}
@@ -314,18 +560,49 @@ void ACombatCharacter::CheckCombo()
 
 void ACombatCharacter::CheckChargedAttack()
 {
-	// raise the looped charged attack flag
-	bHasLoopedChargedAttack = true;
-
-	// jump to either the loop or the attack section depending on whether we're still holding the charge button
-	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
-	{
-		AnimInstance->Montage_JumpToSection(bIsChargingAttack ? ChargeLoopSection : ChargeAttackSection, ChargedAttackMontage);
-	}
+	// stub
 }
 
 void ACombatCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse)
 {
+	// only the server applies damage
+	if (!HasAuthority() || IsDead())
+	{
+		return;
+	}
+
+	// was the attack guarded?
+	if (IsFacingAttacker(DamageCauser))
+	{
+		// a parry stops the damage and staggers the attacker
+		if (GetWorld()->GetTimeSeconds() < ParryWindowEndTime)
+		{
+			ParryWindowEndTime = 0.0f;
+
+			if (ACombatCharacter* Attacker = Cast<ACombatCharacter>(DamageCauser))
+			{
+				Attacker->Stagger(ParryStaggerTime);
+			}
+
+			MulticastGuardedAttack(true, DamageLocation);
+
+			return;
+		}
+
+		// a block reduces the damage
+		if (bIsBlocking)
+		{
+			Damage *= BlockDamageMultiplier;
+
+			MulticastGuardedAttack(false, DamageLocation);
+
+			if (Damage <= 0.0f)
+			{
+				return;
+			}
+		}
+	}
+
 	// pass the damage event to the actor
 	FDamageEvent DamageEvent;
 	const float ActualDamage = TakeDamage(Damage, DamageEvent, nullptr, DamageCauser);
@@ -336,6 +613,12 @@ void ACombatCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVe
 		// apply the knockback impulse
 		GetCharacterMovement()->AddImpulse(DamageImpulse, true);
 
+		// remote players move themselves, so they need the impulse too
+		if (!IsLocallyControlled())
+		{
+			ClientApplyKnockback(DamageImpulse);
+		}
+
 		// is the character ragdolling?
 		if (GetMesh()->IsSimulatingPhysics())
 		{
@@ -343,25 +626,16 @@ void ACombatCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVe
 			GetMesh()->AddImpulseAtLocation(DamageImpulse * GetMesh()->GetMass(), DamageLocation);
 		}
 
-		// pass control to BP to play effects, etc.
-		ReceivedDamage(ActualDamage, DamageLocation, DamageImpulse.GetSafeNormal());
+		// play the reaction everywhere
+		MulticastReceivedDamage(ActualDamage, DamageLocation, DamageImpulse.GetSafeNormal());
 	}
 
 }
 
 void ACombatCharacter::HandleDeath()
 {
-	// disable movement while we're dead
-	GetCharacterMovement()->DisableMovement();
-
-	// enable full ragdoll physics
-	GetMesh()->SetSimulatePhysics(true);
-
-	// hide the life bar
-	LifeBar->SetHiddenInGame(true);
-
-	// pull back the camera
-	GetCameraBoom()->TargetArmLength = DeathCameraDistance;
+	// ragdoll everywhere
+	MulticastDeath();
 
 	// schedule respawning
 	GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &ACombatCharacter::RespawnCharacter, RespawnTime, false);
@@ -380,8 +654,8 @@ void ACombatCharacter::RespawnCharacter()
 
 float ACombatCharacter::TakeDamage(float Damage, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
-	// only process damage if the character is still alive
-	if (CurrentHP <= 0.0f)
+	// only process damage on the server, and only if the character is still alive
+	if (!HasAuthority() || IsDead())
 	{
 		return 0.0f;
 	}
@@ -389,20 +663,14 @@ float ACombatCharacter::TakeDamage(float Damage, struct FDamageEvent const& Dama
 	// reduce the current HP
 	CurrentHP -= Damage;
 
+	// update the life bar on the server, clients update through OnRep
+	UpdateLifeBar();
+
 	// have we run out of HP?
-	if (CurrentHP <= 0.0f)
+	if (IsDead())
 	{
 		// die
 		HandleDeath();
-	}
-	else
-	{
-		// update the life bar
-		LifeBarWidget->SetLifePercentage(CurrentHP / MaxHP);
-
-		// enable partial ragdoll physics, but keep the pelvis vertical
-		GetMesh()->SetPhysicsBlendWeight(0.5f);
-		GetMesh()->SetBodySimulatePhysics(PelvisBoneName, false);
 	}
 
 	// return the received damage amount
@@ -414,7 +682,7 @@ void ACombatCharacter::Landed(const FHitResult& Hit)
 	Super::Landed(Hit);
 
 	// is the character still alive?
-	if (CurrentHP >= 0.0f)
+	if (!IsDead())
 	{
 		// disable ragdoll physics
 		GetMesh()->SetPhysicsBlendWeight(0.0f);
@@ -438,8 +706,18 @@ void ACombatCharacter::BeginPlay()
 	// set the life bar color
 	LifeBarWidget->SetBarColor(LifeBarColor);
 
-	// reset HP to maximum
-	ResetHP();
+	// save the walk speed so blocking can restore it
+	DefaultWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+
+	// the server sets the HP, clients receive it through replication
+	if (HasAuthority())
+	{
+		ResetHP();
+	}
+	else
+	{
+		UpdateLifeBar();
+	}
 }
 
 void ACombatCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -467,9 +745,10 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		// Combo Attack
 		EnhancedInputComponent->BindAction(ComboAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ComboAttackPressed);
 
-		// Charged Attack
-		EnhancedInputComponent->BindAction(ChargedAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ChargedAttackPressed);
-		EnhancedInputComponent->BindAction(ChargedAttackAction, ETriggerEvent::Completed, this, &ACombatCharacter::ChargedAttackReleased);
+		// Guard
+		EnhancedInputComponent->BindAction(GuardAction, ETriggerEvent::Started, this, &ACombatCharacter::GuardPressed);
+		EnhancedInputComponent->BindAction(GuardAction, ETriggerEvent::Completed, this, &ACombatCharacter::GuardReleased);
+		EnhancedInputComponent->BindAction(GuardAction, ETriggerEvent::Canceled, this, &ACombatCharacter::GuardReleased);
 	}
 }
 
@@ -484,3 +763,11 @@ void ACombatCharacter::NotifyControllerChanged()
 	}
 }
 
+void ACombatCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ACombatCharacter, CurrentHP);
+
+	DOREPLIFETIME(ACombatCharacter, bIsBlocking);
+}
