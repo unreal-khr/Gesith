@@ -1,0 +1,44 @@
+Language: Cpp
+BasedOnStyle: LLVM
+ColumnLimit: 0
+DisableFormat: false
+
+BreakBeforeBraces: Allman
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: None
+UseTab: ForContinuationAndIndentation
+TabWidth: 4
+IndentWidth: 4
+
+AccessModifierOffset: -2
+IndentAccessModifiers: false
+
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Left
+AlignTrailingComments: true
+MaxEmptyLinesToKeep: 1
+InsertNewlineAtEOF: true
+
+StatementMacros:
+  - 'UPROPERTY'
+  - 'UFUNCTION'
+  - 'UCLASS'
+  - 'USTRUCT'
+  - 'UENUM'
+  - 'UINTERFACE'
+  - 'GENERATED_BODY'
+
+SortIncludes: true
+IncludeBlocks: Regroup
+IncludeIsMainRegex: "$"
+IncludeCategories:
+  - Regex:           '.*\.generated\.h'
+    Priority:        100
+  - Regex:           '"[^/]*"'
+    Priority:        1
+  - Regex:           '^<[^/]*>'
+    Priority:        3
+  - Regex:           '^<.*>'
+    Priority:        4
+  - Regex:           '".*"'
+    Priority:        2
