@@ -19,11 +19,10 @@ class UWidgetComponent;
 DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
 
 /**
- *  An enhanced Third Person Character with melee combat capabilities:
- *  - Combo attack string
- *  - Press and hold charged attack
- *  - Damage dealing and reaction
- *  - Death
+ *  An enhanced Third Person Character with networked melee combat capabilities:
+ *  - Combo attack string, hit detection runs on the server only
+ *  - Guard input: hold to block with a shield, or tap to parry without one
+ *  - Replicated HP, damage reaction and death
  *  - Respawning
  */
 UCLASS(abstract)
@@ -65,16 +64,16 @@ protected:
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* ComboAttackAction;
 
-	/** Charged Attack Input Action */
+	/** Guard Input Action. Hold to block with a shield, tap to parry without one */
 	UPROPERTY(EditAnywhere, Category ="Input")
-	UInputAction* ChargedAttackAction;
+	UInputAction* GuardAction;
 
 	/** Max amount of HP the character will have on respawn */
 	UPROPERTY(EditAnywhere, Category="Damage", meta = (ClampMin = 0, ClampMax = 100))
 	float MaxHP = 5.0f;
 
-	/** Current amount of HP the character has */
-	UPROPERTY(VisibleAnywhere, Category="Damage")
+	/** Current amount of HP the character has. Only the server changes it */
+	UPROPERTY(VisibleAnywhere, ReplicatedUsing=OnRep_CurrentHP, Category="Damage")
 	float CurrentHP = 0.0f;
 
 	/** Life bar widget fill color */
@@ -134,23 +133,56 @@ protected:
 	/** Index of the current stage of the melee attack combo */
 	int32 ComboCount = 0;
 
-	/** AnimMontage that will play for charged attacks */
-	UPROPERTY(EditAnywhere, Category="Melee Attack|Charged")
-	UAnimMontage* ChargedAttackMontage;
+	/** Attack animation speed. Final value will later be the attack speed stat multiplied by the weapon speed */
+	UPROPERTY(EditAnywhere, Category="Melee Attack", meta = (ClampMin = 0.1, ClampMax = 3))
+	float AttackSpeed = 1.0f;
 
-	/** Name of the AnimMontage section that corresponds to the charge loop */
-	UPROPERTY(EditAnywhere, Category="Melee Attack|Charged")
-	FName ChargeLoopSection;
+	/** If true, the guard input blocks while held. If false, it attempts a parry when pressed */
+	UPROPERTY(EditAnywhere, Category="Guard")
+	bool bHasShield = true;
 
-	/** Name of the AnimMontage section that corresponds to the attack */
-	UPROPERTY(EditAnywhere, Category="Melee Attack|Charged")
-	FName ChargeAttackSection;
+	/** If true, the character is holding up a shield */
+	UPROPERTY(ReplicatedUsing=OnRep_IsBlocking, BlueprintReadOnly, Category="Guard")
+	bool bIsBlocking = false;
 
-	/** Flag that determines if the player is currently holding the charged attack input */
-	bool bIsChargingAttack = false;
-	
-	/** If true, the charged attack hold check has been tested at least once */
-	bool bHasLoopedChargedAttack = false;
+	/** Fraction of damage that still goes through a block */
+	UPROPERTY(EditAnywhere, Category="Guard", meta = (ClampMin = 0, ClampMax = 1))
+	float BlockDamageMultiplier = 0.0f;
+
+	/** Movement speed multiplier while blocking */
+	UPROPERTY(EditAnywhere, Category="Guard", meta = (ClampMin = 0, ClampMax = 1))
+	float BlockWalkSpeedMultiplier = 0.5f;
+
+	/** Attacks coming from within this angle of the character's facing can be blocked or parried */
+	UPROPERTY(EditAnywhere, Category="Guard", meta = (ClampMin = 0, ClampMax = 180, Units = "deg"))
+	float GuardAngle = 60.0f;
+
+	/** How long a parry stays active after the guard input is pressed. Generous enough to absorb network latency */
+	UPROPERTY(EditAnywhere, Category="Guard|Parry", meta = (ClampMin = 0, ClampMax = 1, Units = "s"))
+	float ParryWindow = 0.3f;
+
+	/** Minimum time between parry attempts, so the input can't be spammed */
+	UPROPERTY(EditAnywhere, Category="Guard|Parry", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
+	float ParryCooldown = 0.8f;
+
+	/** How long an attacker is unable to act after being parried */
+	UPROPERTY(EditAnywhere, Category="Guard|Parry", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
+	float ParryStaggerTime = 1.0f;
+
+	/** Testing aid: when true, every attack from the front is blocked, or parried without a shield. Server only */
+	bool bDebugAutoGuard = false;
+
+	/** Server time at which the current parry window closes */
+	float ParryWindowEndTime = 0.0f;
+
+	/** Time at which the next parry attempt is allowed */
+	float NextParryTime = 0.0f;
+
+	/** Local time at which the current stagger ends */
+	float StaggerEndTime = 0.0f;
+
+	/** Walk speed saved on BeginPlay, so it can be restored after blocking */
+	float DefaultWalkSpeed = 0.0f;
 
 	/** Camera boom length while the character is dead */
 	UPROPERTY(EditAnywhere, Category="Camera", meta = (ClampMin = 0, ClampMax = 1000, Units = "cm"))
@@ -189,11 +221,11 @@ protected:
 	/** Called for combo attack input */
 	void ComboAttackPressed();
 
-	/** Called for combo attack input pressed */
-	void ChargedAttackPressed();
+	/** Called for guard input pressed */
+	void GuardPressed();
 
-	/** Called for combo attack input released */
-	void ChargedAttackReleased();
+	/** Called for guard input released */
+	void GuardReleased();
 
 public:
 
@@ -213,27 +245,119 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoComboAttackEnd();
 
-	/** Handles charged attack pressed from either controls or UI interfaces */
+	/** Handles guard pressed from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
-	virtual void DoChargedAttackStart();
+	virtual void DoGuardStart();
 
-	/** Handles charged attack released from either controls or UI interfaces */
+	/** Handles guard released from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
-	virtual void DoChargedAttackEnd();
+	virtual void DoGuardEnd();
+
+	/** Returns true if the character has run out of HP */
+	UFUNCTION(BlueprintPure, Category="Combat")
+	bool IsDead() const { return CurrentHP <= 0.0f; }
+
+	/** Returns true if the character was recently parried and can't act */
+	UFUNCTION(BlueprintPure, Category="Combat")
+	bool IsStaggered() const;
+
+	/** Console command for solo testing. Toggles guarding every attack from the front without holding the input */
+	UFUNCTION(Exec)
+	void AutoGuard();
+
+	/** Interrupts the current attack and stops the character from acting for a while. Server only */
+	void Stagger(float Duration);
 
 protected:
 
 	/** Resets the character's current HP to maximum */
 	void ResetHP();
 
+	/** Updates the life bar to match the current HP */
+	void UpdateLifeBar();
+
+	/** Handles combo attack input on both the owning client and the server */
+	void HandleComboAttackInput();
+
 	/** Performs a combo attack */
 	void ComboAttack();
 
-	/** Performs a charged attack */
-	void ChargedAttack();
+	/** Plays the combo attack montage from the start */
+	void PlayComboAttackMontage();
 
 	/** Called from a delegate when the attack montage ends */
 	void AttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	/** Raises or lowers the shield */
+	void SetBlocking(bool bNewBlocking);
+
+	/** Slows the character down while the shield is up */
+	void UpdateWalkSpeed();
+
+	/** Opens the parry window if the cooldown allows it. Server only */
+	void TryParry();
+
+	/** Prints a combat event on screen for testing. Does nothing in shipping builds */
+	void ShowCombatDebugMessage(const FString& Message, const FColor& Color) const;
+
+	/** Returns true if an attack coming from the provided actor is within the guard angle */
+	bool IsFacingAttacker(const AActor* Attacker) const;
+
+	/** Called on clients when CurrentHP replicates */
+	UFUNCTION()
+	void OnRep_CurrentHP();
+
+	/** Called on clients when the blocking state replicates */
+	UFUNCTION()
+	void OnRep_IsBlocking();
+
+	/** Sends the combo attack input to the server */
+	UFUNCTION(Server, Reliable)
+	void ServerComboAttackInput();
+
+	/** Sends the blocking state to the server */
+	UFUNCTION(Server, Reliable)
+	void ServerSetBlocking(bool bNewBlocking);
+
+	/** Sends the auto guard toggle to the server */
+	UFUNCTION(Server, Reliable)
+	void ServerAutoGuard();
+
+	/** Sends a parry attempt to the server */
+	UFUNCTION(Server, Reliable)
+	void ServerParry();
+
+	/** Plays the combo attack montage on other machines */
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastPlayComboAttack();
+
+	/** Advances the combo on other machines */
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastJumpToComboSection(int32 NewComboCount);
+
+	/** Plays the damage dealt effects everywhere */
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastDealtDamage(float Damage, const FVector_NetQuantize& ImpactPoint);
+
+	/** Plays the damage reaction everywhere */
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastReceivedDamage(float Damage, const FVector_NetQuantize& ImpactPoint, const FVector_NetQuantizeNormal& DamageDirection);
+
+	/** Plays the blocked or parried reaction everywhere */
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastGuardedAttack(bool bWasParried, const FVector_NetQuantize& ImpactPoint);
+
+	/** Interrupts the attack and starts the stagger everywhere */
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastStagger(float Duration);
+
+	/** Ragdolls the character everywhere */
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastDeath();
+
+	/** Applies knockback on the owning client so its movement matches the server */
+	UFUNCTION(Client, Reliable)
+	void ClientApplyKnockback(const FVector& DamageImpulse);
 
 	
 public:
@@ -246,7 +370,7 @@ public:
 	/** Performs the combo string check */
 	virtual void CheckCombo() override;
 
-	/** Performs the charged attack hold check */
+	/** Unused by players, kept for the attacker interface */
 	virtual void CheckChargedAttack() override;
 
 	// ~end CombatAttacker interface
@@ -285,6 +409,14 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")
 	void ReceivedDamage(float Damage, const FVector& ImpactPoint, const FVector& DamageDirection);
 
+	/** Blueprint handler to play block and parry effects */
+	UFUNCTION(BlueprintImplementableEvent, Category="Combat")
+	void GuardedAttack(bool bWasParried, const FVector& ImpactPoint);
+
+	/** Blueprint handler to play stagger effects */
+	UFUNCTION(BlueprintImplementableEvent, Category="Combat")
+	void Staggered(float Duration);
+
 protected:
 
 	/** Initialization */
@@ -298,6 +430,9 @@ protected:
 
 	/** Handles possessed initialization */
 	virtual void NotifyControllerChanged() override;
+
+	/** Registers replicated properties */
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 public:
 
