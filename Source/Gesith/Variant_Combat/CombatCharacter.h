@@ -169,6 +169,22 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Guard|Parry", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
 	float ParryStaggerTime = 1.0f;
 
+	/** Team this character fights for. 0 means no team: soldiers ignore it and it can hit anyone */
+	UPROPERTY(ReplicatedUsing=OnRep_TeamId, BlueprintReadOnly, Category="Team")
+	int32 TeamId = 0;
+
+	/** Life bar colors for teams 1 and 2 */
+	UPROPERTY(EditAnywhere, Category="Team")
+	TArray<FLinearColor> TeamColors;
+
+	/** Distance between soldiers in a spawned battle line */
+	UPROPERTY(EditAnywhere, Category="Team|Testing", meta = (ClampMin = 50, ClampMax = 1000, Units = "cm"))
+	float BattleLineSpacing = 150.0f;
+
+	/** Distance between the two spawned battle lines */
+	UPROPERTY(EditAnywhere, Category="Team|Testing", meta = (ClampMin = 100, ClampMax = 5000, Units = "cm"))
+	float BattleLineGap = 800.0f;
+
 	/** Testing aid: when true, every attack from the front is blocked, or parried without a shield. Server only */
 	bool bDebugAutoGuard = false;
 
@@ -261,6 +277,33 @@ public:
 	UFUNCTION(BlueprintPure, Category="Combat")
 	bool IsStaggered() const;
 
+	/** Returns true if the character is playing an attack animation */
+	bool IsAttacking() const { return bIsAttacking; }
+
+	/** Returns true if the character is holding up a shield */
+	bool IsBlocking() const { return bIsBlocking; }
+
+	/** Returns true if both characters are on different teams. Characters without a team are nobody's enemy */
+	bool IsEnemyOf(const ACombatCharacter* Other) const;
+
+	/** Returns true if both characters are on the same team, so they can't hurt each other */
+	bool IsAllyOf(const ACombatCharacter* Other) const;
+
+	/** Sets the team and updates the life bar color. Server only */
+	void SetTeam(int32 NewTeamId);
+
+	/** Console command: joins team 1 or 2 so soldiers fight you, or 0 to leave */
+	UFUNCTION(Exec)
+	void JoinTeam(int32 NewTeamId);
+
+	/** Console command: spawns two AI battle lines in front of you, with this many soldiers on each team */
+	UFUNCTION(Exec)
+	void SpawnBattle(int32 SoldiersPerTeam = 5);
+
+	/** Console command: removes every AI soldier */
+	UFUNCTION(Exec)
+	void ClearBattle();
+
 	/** Console command for solo testing. Toggles guarding every attack from the front without holding the input */
 	UFUNCTION(Exec)
 	void AutoGuard();
@@ -318,6 +361,25 @@ protected:
 	/** Sends the blocking state to the server */
 	UFUNCTION(Server, Reliable)
 	void ServerSetBlocking(bool bNewBlocking);
+
+	/** Sends the team change to the server */
+	UFUNCTION(Server, Reliable)
+	void ServerJoinTeam(int32 NewTeamId);
+
+	/** Asks the server to spawn a battle */
+	UFUNCTION(Server, Reliable)
+	void ServerSpawnBattle(int32 SoldiersPerTeam);
+
+	/** Asks the server to remove every AI soldier */
+	UFUNCTION(Server, Reliable)
+	void ServerClearBattle();
+
+	/** Prints how many soldiers are still alive on each team */
+	void ShowBattleStatus() const;
+
+	/** Called on clients when the team replicates */
+	UFUNCTION()
+	void OnRep_TeamId();
 
 	/** Sends the auto guard toggle to the server */
 	UFUNCTION(Server, Reliable)
