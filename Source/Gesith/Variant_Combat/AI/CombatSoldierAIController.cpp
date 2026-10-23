@@ -69,9 +69,9 @@ void ACombatSoldierAIController::ReportToCastle(bool bFell)
 
 	if (bFell)
 	{
-		Message = Castle->SoldierFell(RosterId)
-			? FString::Printf(TEXT("%s was killed"), *Name)
-			: FString::Printf(TEXT("%s was wounded and carried home"), *Name);
+		Castle->SoldierFell(RosterId);
+
+		Message = FString::Printf(TEXT("%s was killed"), *Name);
 	}
 	else
 	{

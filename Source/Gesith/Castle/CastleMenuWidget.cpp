@@ -61,17 +61,8 @@ void UCastleSoldierRow::Setup(UCastleMenuWidget* InMenu, const FSoldierRecord& S
 	OneDecimal.MinimumFractionalDigits = 1;
 	OneDecimal.MaximumFractionalDigits = 1;
 
-	// soldiers away or recovering say so after their name
-	FText Status = FText::GetEmpty();
-
-	if (Soldier.bInField)
-	{
-		Status = LOCTEXT("InField", " (출정 중)");
-	}
-	else if (Soldier.WoundedDays > 0)
-	{
-		Status = FText::Format(LOCTEXT("Wounded", " (부상, {0}일 후 회복)"), FText::AsNumber(Soldier.WoundedDays));
-	}
+	// soldiers out with a lord say so after their name
+	const FText Status = Soldier.bInField ? LOCTEXT("InField", " (출정 중)") : FText::GetEmpty();
 
 	InfoText->SetText(FText::Format(
 		LOCTEXT("SoldierInfo", "{0}{9}  [{1}]   체력 {2}  힘 {3}  지구력 {4}  공속 {5}  숙련 {6}   평균 {7} / {8}"),

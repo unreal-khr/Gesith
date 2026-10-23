@@ -290,31 +290,17 @@ void AGesithCastle::SoldierReturned(int32 SoldierId, bool bFought)
 	NotifyChanged();
 }
 
-bool AGesithCastle::SoldierFell(int32 SoldierId)
+void AGesithCastle::SoldierFell(int32 SoldierId)
 {
-	FSoldierRecord* Soldier = HasAuthority() ? FindSoldier(SoldierId) : nullptr;
-
-	if (!Soldier)
+	if (!HasAuthority())
 	{
-		return false;
+		return;
 	}
 
-	const bool bKilled = FMath::FRand() < DeathChance;
-
-	if (bKilled)
+	if (Roster.RemoveAll([SoldierId](const FSoldierRecord& Soldier) { return Soldier.Id == SoldierId; }) > 0)
 	{
-		Roster.RemoveAll([SoldierId](const FSoldierRecord& Other) { return Other.Id == SoldierId; });
+		NotifyChanged();
 	}
-	else
-	{
-		// the wounded are carried home to recover
-		Soldier->bInField = false;
-		Soldier->WoundedDays = WoundRecoveryDays;
-	}
-
-	NotifyChanged();
-
-	return bKilled;
 }
 
 FText AGesithCastle::GetRankName(ESoldierRank Rank)
@@ -361,12 +347,6 @@ void AGesithCastle::AdvanceDay()
 	else
 	{
 		++UnpaidFoodDays;
-	}
-
-	// the wounded heal a little every day
-	for (FSoldierRecord& Soldier : Roster)
-	{
-		Soldier.WoundedDays = FMath::Max(Soldier.WoundedDays - 1, 0);
 	}
 
 	// one soldier leaves for each day past the limit

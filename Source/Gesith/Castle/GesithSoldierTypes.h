@@ -58,14 +58,10 @@ struct FSoldierRecord
 	UPROPERTY(BlueprintReadOnly, Category="Soldier")
 	bool bInField = false;
 
-	/** Days left until the soldier recovers from a battle wound. 0 when healthy */
-	UPROPERTY(BlueprintReadOnly, Category="Soldier")
-	int32 WoundedDays = 0;
-
-	/** Returns true if the soldier is in the castle and healthy, so they can train or march out */
+	/** Returns true if the soldier is in the castle, so they can train or march out */
 	bool IsAvailable() const
 	{
-		return !bInField && WoundedDays == 0;
+		return !bInField;
 	}
 
 	/** Average of all stats, used for promotion */
