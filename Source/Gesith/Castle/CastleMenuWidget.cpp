@@ -61,8 +61,8 @@ void UCastleSoldierRow::Setup(UCastleMenuWidget* InMenu, const FSoldierRecord& S
 	OneDecimal.MinimumFractionalDigits = 1;
 	OneDecimal.MaximumFractionalDigits = 1;
 
-	// soldiers out with a lord say so after their name
-	const FText Status = Soldier.bInField ? LOCTEXT("InField", " (출정 중)") : FText::GetEmpty();
+	// summoned soldiers say so after their name
+	const FText Status = Soldier.bInField ? LOCTEXT("InField", " (소집 중)") : FText::GetEmpty();
 
 	InfoText->SetText(FText::Format(
 		LOCTEXT("SoldierInfo", "{0}{9}  [{1}]   체력 {2}  힘 {3}  지구력 {4}  공속 {5}  숙련 {6}   평균 {7} / {8}"),
@@ -166,10 +166,16 @@ void UCastleMenuWidget::NativeOnInitialized()
 	MusterButtonText = MusterLabel;
 	MusterButton->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandleMusterClicked);
 
-	// recruiting and marching out sit side by side
+	UTextBlock* DismissLabel = nullptr;
+
+	DismissButton = MakeButton(this, LOCTEXT("Dismiss", "소집 해제"), DismissLabel);
+	DismissButton->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandleDismissClicked);
+
+	// recruiting, summoning and dismissing sit side by side
 	UHorizontalBox* ActionBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 	ActionBox->AddChildToHorizontalBox(RecruitButton);
 	ActionBox->AddChildToHorizontalBox(MusterButton)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+	ActionBox->AddChildToHorizontalBox(DismissButton)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
 
 	if (UVerticalBoxSlot* ActionSlot = Content->AddChildToVerticalBox(ActionBox))
 	{
@@ -257,8 +263,9 @@ void UCastleMenuWidget::Refresh()
 
 	const int32 Available = Castle->GetAvailableCount();
 
-	MusterButtonText->SetText(FText::Format(LOCTEXT("Muster", "출정 ({0}명)"), FText::AsNumber(Available)));
+	MusterButtonText->SetText(FText::Format(LOCTEXT("Muster", "병사 소집 ({0}명)"), FText::AsNumber(Available)));
 	MusterButton->SetIsEnabled(Available > 0);
+	DismissButton->SetIsEnabled(Castle->HasSoldiersInField());
 
 	// rebuild the roster rows
 	RosterBox->ClearChildren();
@@ -288,6 +295,14 @@ void UCastleMenuWidget::HandleMusterClicked()
 	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
 	{
 		PC->ServerCastleMuster(Castle.Get());
+	}
+}
+
+void UCastleMenuWidget::HandleDismissClicked()
+{
+	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
+	{
+		PC->ServerCastleDismiss(Castle.Get());
 	}
 }
 

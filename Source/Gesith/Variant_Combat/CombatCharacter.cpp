@@ -295,7 +295,15 @@ void ACombatCharacter::ServerClearBattle_Implementation()
 #if !UE_BUILD_SHIPPING
 	for (TActorIterator<ACombatCharacter> It(GetWorld()); It; ++It)
 	{
-		if (Cast<ACombatSoldierAIController>(It->GetController()) || (!It->IsPlayerControlled() && It->TeamId != 0))
+		const ACombatSoldierAIController* SoldierAI = Cast<ACombatSoldierAIController>(It->GetController());
+
+		// castle soldiers belong to the roster, not the test battle
+		if (SoldierAI && SoldierAI->GetHomeCastle())
+		{
+			continue;
+		}
+
+		if (SoldierAI || (!It->IsPlayerControlled() && It->TeamId != 0))
 		{
 			It->Destroy();
 		}
@@ -335,27 +343,55 @@ void ACombatCharacter::MusterFromCastle(AGesithCastle* Castle)
 		return;
 	}
 
-	const TArray<FSoldierRecord> Records = Castle->MusterSoldiers();
-	const TArray<ACombatCharacter*> Soldiers = SpawnSquadMembers(Records.Num());
-
-	// soldiers that failed to spawn stay home
-	for (int32 Index = 0; Index < Records.Num(); ++Index)
+	// the lord fights on the castle's side
+	if (TeamId != Castle->TeamId)
 	{
-		ACombatSoldierAIController* SoldierAI = Soldiers.IsValidIndex(Index) ? Cast<ACombatSoldierAIController>(Soldiers[Index]->GetController()) : nullptr;
+		SetTeam(Castle->TeamId);
+	}
 
-		if (SoldierAI)
+	const TArray<FSoldierRecord> Records = Castle->MusterSoldiers();
+
+	for (const FSoldierRecord& Record : Records)
+	{
+		ACombatCharacter* Soldier = Castle->GetSoldierPawn(Record.Id);
+		ACombatSoldierAIController* SoldierAI = Soldier ? Cast<ACombatSoldierAIController>(Soldier->GetController()) : nullptr;
+
+		// soldiers without a character right now stay home
+		if (!SoldierAI || Soldier->IsDead())
 		{
-			SoldierAI->SetRosterSoldier(Castle, Records[Index]);
+			Castle->SoldierReturned(Record.Id, false);
+			continue;
 		}
-		else
-		{
-			Castle->SoldierReturned(Records[Index].Id, false);
-		}
+
+		// stats may have grown at the training ground since the character was made
+		SoldierAI->SetRosterSoldier(Castle, Record);
+		SoldierAI->JoinSquad(this);
 	}
 
 	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
 
-	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers marched out. Walk them back into the castle to bring them home"), Count), FColor::Green);
+	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers summoned. 1 Follow, 2 Hold, 3 Charge"), Count), FColor::Green);
+}
+
+void ACombatCharacter::DismissToCastle(AGesithCastle* Castle)
+{
+	if (!HasAuthority() || !Castle)
+	{
+		return;
+	}
+
+	int32 Count = 0;
+
+	for (TActorIterator<ACombatSoldierAIController> It(GetWorld()); It; ++It)
+	{
+		if (It->GetSquadLeader() == this && It->GetHomeCastle() == Castle)
+		{
+			It->ReturnToPost();
+			++Count;
+		}
+	}
+
+	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers dismissed and went back to their posts"), Count), FColor::Green);
 }
 
 void ACombatCharacter::ApplySoldierStats(float Health, float Strength)
@@ -365,9 +401,12 @@ void ACombatCharacter::ApplySoldierStats(float Health, float Strength)
 		return;
 	}
 
+	// start from the class defaults so applying stats again after training doesn't stack
+	const ACombatCharacter* Defaults = GetClass()->GetDefaultObject<ACombatCharacter>();
+
 	// a fresh recruit (10) fights like the base character, the stat cap (100) is much tougher
-	MaxHP *= 0.5f + Health / 20.0f;
-	MeleeDamage *= 0.5f + Strength / 20.0f;
+	MaxHP = Defaults->MaxHP * (0.5f + Health / 20.0f);
+	MeleeDamage = Defaults->MeleeDamage * (0.5f + Strength / 20.0f);
 
 	ResetHP();
 }

@@ -281,6 +281,16 @@ void ACombatPlayerController::ServerCastleMuster_Implementation(AGesithCastle* C
 	}
 }
 
+void ACombatPlayerController::ServerCastleDismiss_Implementation(AGesithCastle* Castle)
+{
+	ACombatCharacter* Leader = Cast<ACombatCharacter>(GetPawn());
+
+	if (Leader && CanManageCastle(Castle))
+	{
+		Leader->DismissToCastle(Castle);
+	}
+}
+
 void ACombatPlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);

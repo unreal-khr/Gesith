@@ -9,6 +9,7 @@
 
 class UBoxComponent;
 class UStaticMeshComponent;
+class ACombatCharacter;
 
 DECLARE_MULTICAST_DELEGATE(FOnCastleChanged);
 
@@ -72,6 +73,14 @@ public:
 	/** Soldiers belonging to this castle */
 	UPROPERTY(VisibleAnywhere, ReplicatedUsing=OnRep_CastleChanged, Category="Castle")
 	TArray<FSoldierRecord> Roster;
+
+	/** Team the castle's soldiers fight for */
+	UPROPERTY(EditAnywhere, Category="Castle")
+	int32 TeamId = 1;
+
+	/** Character spawned for each soldier. If empty, the first player's character class is used */
+	UPROPERTY(EditAnywhere, Category="Castle")
+	TSubclassOf<ACombatCharacter> SoldierClass;
 
 	/** Broadcast on every machine whenever anything shown in the castle menu changes */
 	FOnCastleChanged OnCastleChanged;
@@ -163,6 +172,12 @@ protected:
 	/** Id given to the next recruited soldier */
 	int32 NextSoldierId = 1;
 
+	/** Character of each soldier in the roster, by soldier id. Server only */
+	TMap<int32, TWeakObjectPtr<ACombatCharacter>> SoldierPawns;
+
+	/** Time until the soldier characters are checked against the roster again */
+	float PawnSyncTimer = 0.0f;
+
 public:
 
 	/** Constructor */
@@ -204,11 +219,20 @@ public:
 	/** Returns how many soldiers are in the castle */
 	int32 GetAvailableCount() const;
 
-	/** Sends every soldier in the castle out with a lord and returns them. Server only */
+	/** Summons every soldier in the castle to follow a lord and returns them. Server only */
 	TArray<FSoldierRecord> MusterSoldiers();
 
-	/** A soldier walked back into the castle. Soldiers who fought get a little stronger. Server only */
+	/** A summoned soldier was dismissed and goes back to their post. Soldiers who fought get a little stronger. Server only */
 	void SoldierReturned(int32 SoldierId, bool bFought);
+
+	/** Returns true if any soldier is currently summoned */
+	bool HasSoldiersInField() const;
+
+	/** Returns the character of a soldier in the roster, or nullptr. Server only */
+	ACombatCharacter* GetSoldierPawn(int32 SoldierId) const;
+
+	/** Finds where a soldier stands while in the castle: the barracks, or the training ground while training. Returns false if the soldier isn't in the roster */
+	bool GetSoldierPost(int32 SoldierId, FVector& OutLocation, FVector& OutForward, bool& bOutTraining) const;
 
 	/** A soldier died in battle and is gone from the roster for good. Server only */
 	void SoldierFell(int32 SoldierId);
@@ -232,6 +256,12 @@ protected:
 
 	/** Removes one random soldier from the roster */
 	void DesertOne();
+
+	/** Spawns characters for soldiers that don't have one and removes characters of soldiers who left the roster */
+	void SyncSoldierPawns();
+
+	/** Returns the class used for soldier characters, or nullptr if none is known yet */
+	UClass* FindSoldierClass() const;
 
 	/** Returns the soldier with the provided id, or nullptr */
 	FSoldierRecord* FindSoldier(int32 SoldierId);

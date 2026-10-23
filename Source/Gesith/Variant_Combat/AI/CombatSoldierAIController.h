@@ -15,7 +15,9 @@ struct FSoldierRecord;
  *  A simple AI Controller that drives a CombatCharacter in team battles.
  *  Runs on the server only and uses the same attack and guard inputs as a player, so it tests the networked combat code.
  *  Walks straight at its target, so it doesn't need a nav mesh.
- *  A soldier with a squad leader follows the leader's orders. Without one it always charges.
+ *  A soldier with a squad leader follows the leader's orders.
+ *  A castle soldier without a leader stands at their post in the castle, or drills at the training ground.
+ *  Any other soldier always charges.
  */
 UCLASS()
 class ACombatSoldierAIController : public AAIController
@@ -76,6 +78,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Squad", meta = (ClampMin = 0, ClampMax = 1000, Units = "deg/s"))
 	float FollowTurnRate = 120.0f;
 
+	/** Shortest time between practice swings at the training ground */
+	UPROPERTY(EditAnywhere, Category="Castle", meta = (ClampMin = 0, ClampMax = 30, Units = "s"))
+	float MinDrillInterval = 2.0f;
+
+	/** Longest time between practice swings at the training ground */
+	UPROPERTY(EditAnywhere, Category="Castle", meta = (ClampMin = 0, ClampMax = 30, Units = "s"))
+	float MaxDrillInterval = 4.0f;
+
 	/** Soldiers closer than this to their slot stop walking */
 	UPROPERTY(EditAnywhere, Category="Squad", meta = (ClampMin = 0, ClampMax = 500, Units = "cm"))
 	float SlotTolerance = 60.0f;
@@ -107,14 +117,17 @@ protected:
 	/** Roster id of this soldier in the home castle */
 	int32 RosterId = 0;
 
-	/** True once the soldier has marched out of the home castle, so walking back in brings them home */
-	bool bLeftCastle = false;
+	/** True while a castle soldier is summoned and follows a lord */
+	bool bInSquad = false;
 
-	/** True once the soldier has fought an enemy */
+	/** True once the soldier has fought an enemy since being summoned */
 	bool bFought = false;
 
-	/** True once the home castle has been told how this soldier's outing ended */
-	bool bReported = false;
+	/** True once the home castle has been told this soldier died */
+	bool bReportedDeath = false;
+
+	/** Time of the next practice swing */
+	float NextDrillTime = 0.0f;
 
 	/** Current enemy */
 	TWeakObjectPtr<ACombatCharacter> Target;
@@ -145,8 +158,14 @@ public:
 	/** Gives this soldier an order and its place in the formation. Server only */
 	void SetSquadOrder(ESquadOrder NewOrder, int32 NewIndex, int32 NewCount, const FVector& Origin, const FVector& Forward);
 
-	/** Links this soldier to a roster entry and applies the entry's stats. Server only */
+	/** Links this soldier to a roster entry and applies the entry's current stats. Can be called again after training. Server only */
 	void SetRosterSoldier(AGesithCastle* Castle, const FSoldierRecord& Record);
+
+	/** Leaves the squad and goes back to their post in the castle. Server only */
+	void ReturnToPost();
+
+	/** Returns the castle this soldier belongs to, or nullptr */
+	AGesithCastle* GetHomeCastle() const;
 
 	/** Returns the lord this soldier follows, or nullptr */
 	ACombatCharacter* GetSquadLeader() const { return SquadLeader.Get(); }
@@ -163,8 +182,8 @@ protected:
 	UFUNCTION()
 	void OnPawnDestroyed(AActor* DestroyedActor);
 
-	/** Tells the home castle the soldier came back or fell, once */
-	void ReportToCastle(bool bFell);
+	/** Tells the home castle the soldier died, once */
+	void ReportDeath();
 
 	/** Returns the closest living character on another team that is within MaxRange of Center */
 	ACombatCharacter* FindNearestEnemy(const ACombatCharacter* Soldier, const FVector& Center, float MaxRange) const;
@@ -175,6 +194,6 @@ protected:
 	/** Returns where this soldier stands in a formation whose front center is Origin */
 	FVector GetFormationSlot(const FVector& Origin, const FVector& Forward) const;
 
-	/** Walks to the slot and faces the formation's direction once there */
-	void MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime);
+	/** Walks to the slot and faces the formation's direction once there. Returns true once at the slot */
+	bool MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime);
 };

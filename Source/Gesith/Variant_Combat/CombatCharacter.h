@@ -309,8 +309,11 @@ public:
 	UFUNCTION(Exec)
 	void SpawnSquad(int32 SquadSize = 5);
 
-	/** Spawns the castle's available soldiers as a squad following this character. Server only */
+	/** Summons the castle's soldiers to follow this character. Server only */
 	void MusterFromCastle(AGesithCastle* Castle);
+
+	/** Sends this character's soldiers from the castle back to their posts. Server only */
+	void DismissToCastle(AGesithCastle* Castle);
 
 	/** Scales HP and damage from a soldier's health and strength. 10 is a fresh recruit. Server only */
 	void ApplySoldierStats(float Health, float Strength);

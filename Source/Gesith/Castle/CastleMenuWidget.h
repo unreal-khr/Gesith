@@ -91,6 +91,9 @@ class UCastleMenuWidget : public UUserWidget
 	TObjectPtr<UTextBlock> MusterButtonText;
 
 	UPROPERTY()
+	TObjectPtr<UButton> DismissButton;
+
+	UPROPERTY()
 	TObjectPtr<UVerticalBox> RosterBox;
 
 	/** Castle shown in the menu */
@@ -132,4 +135,7 @@ protected:
 
 	UFUNCTION()
 	void HandleMusterClicked();
+
+	UFUNCTION()
+	void HandleDismissClicked();
 };

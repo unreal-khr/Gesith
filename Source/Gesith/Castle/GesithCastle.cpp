@@ -8,6 +8,9 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Net/UnrealNetwork.h"
 #include "Gesith.h"
+#include "CombatCharacter.h"
+#include "CombatSoldierAIController.h"
+#include "EngineUtils.h"
 
 AGesithCastle::AGesithCastle()
 {
@@ -106,6 +109,16 @@ void AGesithCastle::Tick(float DeltaSeconds)
 		TrainingTimer -= TrainingInterval;
 
 		RunTrainingSession();
+	}
+
+	// keep a character in the world for every soldier
+	PawnSyncTimer -= DeltaSeconds;
+
+	if (PawnSyncTimer <= 0.0f)
+	{
+		PawnSyncTimer = 1.0f;
+
+		SyncSoldierPawns();
 	}
 
 	DayTimer += DeltaSeconds;
@@ -225,6 +238,157 @@ int32 AGesithCastle::GetDailyWages() const
 	}
 
 	return Total;
+}
+
+bool AGesithCastle::HasSoldiersInField() const
+{
+	return Roster.ContainsByPredicate([](const FSoldierRecord& Soldier) { return Soldier.bInField; });
+}
+
+ACombatCharacter* AGesithCastle::GetSoldierPawn(int32 SoldierId) const
+{
+	const TWeakObjectPtr<ACombatCharacter>* Pawn = SoldierPawns.Find(SoldierId);
+
+	return Pawn ? Pawn->Get() : nullptr;
+}
+
+bool AGesithCastle::GetSoldierPost(int32 SoldierId, FVector& OutLocation, FVector& OutForward, bool& bOutTraining) const
+{
+	const FSoldierRecord* Soldier = Roster.FindByPredicate([SoldierId](const FSoldierRecord& Other) { return Other.Id == SoldierId; });
+
+	if (!Soldier)
+	{
+		return false;
+	}
+
+	bOutTraining = Soldier->bTraining;
+
+	// count the soldiers before this one in the same place, so everyone gets their own spot
+	int32 Index = 0;
+
+	for (const FSoldierRecord& Other : Roster)
+	{
+		if (Other.Id == SoldierId)
+		{
+			break;
+		}
+
+		Index += Other.bTraining == Soldier->bTraining ? 1 : 0;
+	}
+
+	const float Half = CastleSize * 0.5f;
+	const float Spacing = 150.0f;
+	const int32 Width = 5;
+
+	// the barracks line up in the back half, the training ground sits by the gate. Rows go toward the back wall
+	const FVector Origin = bOutTraining ? FVector(Half * 0.2f, Half * 0.2f, 0.0f) : FVector(-Half * 0.5f, -Half * 0.4f, 0.0f);
+	const FVector LocalPost = Origin + FVector(-(Index / Width) * Spacing, (Index % Width) * Spacing, 0.0f);
+
+	OutLocation = GetActorTransform().TransformPosition(LocalPost);
+	OutForward = GetActorForwardVector().GetSafeNormal2D();
+
+	return true;
+}
+
+void AGesithCastle::SyncSoldierPawns()
+{
+	// soldiers who left the roster take their character with them, unless it's lying dead on the field
+	for (auto It = SoldierPawns.CreateIterator(); It; ++It)
+	{
+		ACombatCharacter* Pawn = It.Value().Get();
+		const int32 SoldierId = It.Key();
+
+		if (!Pawn)
+		{
+			It.RemoveCurrent();
+		}
+		else if (!FindSoldier(SoldierId))
+		{
+			if (!Pawn->IsDead())
+			{
+				Pawn->Destroy();
+			}
+
+			It.RemoveCurrent();
+		}
+	}
+
+	UClass* Class = FindSoldierClass();
+
+	if (!Class)
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+	bool bChanged = false;
+
+	for (FSoldierRecord& Soldier : Roster)
+	{
+		if (SoldierPawns.Contains(Soldier.Id))
+		{
+			continue;
+		}
+
+		FVector Location;
+		FVector Forward;
+		bool bTraining = false;
+		GetSoldierPost(Soldier.Id, Location, Forward, bTraining);
+
+		ACombatCharacter* Pawn = GetWorld()->SpawnActor<ACombatCharacter>(Class, Location + FVector(0.0f, 0.0f, 100.0f), Forward.Rotation(), SpawnParams);
+
+		if (!Pawn)
+		{
+			continue;
+		}
+
+		ACombatSoldierAIController* SoldierAI = GetWorld()->SpawnActor<ACombatSoldierAIController>();
+
+		if (!SoldierAI)
+		{
+			Pawn->Destroy();
+			continue;
+		}
+
+		SoldierAI->Possess(Pawn);
+		SoldierAI->SetRosterSoldier(this, Soldier);
+		Pawn->SetTeam(TeamId);
+
+		SoldierPawns.Add(Soldier.Id, Pawn);
+
+		// a soldier whose character went missing while summoned starts again at their post
+		if (Soldier.bInField)
+		{
+			Soldier.bInField = false;
+			bChanged = true;
+		}
+	}
+
+	if (bChanged)
+	{
+		NotifyChanged();
+	}
+}
+
+UClass* AGesithCastle::FindSoldierClass() const
+{
+	if (SoldierClass)
+	{
+		return SoldierClass;
+	}
+
+	// soldiers look like the players until they get their own Blueprint
+	for (TActorIterator<ACombatCharacter> It(GetWorld()); It; ++It)
+	{
+		if (It->IsPlayerControlled())
+		{
+			return It->GetClass();
+		}
+	}
+
+	return nullptr;
 }
 
 int32 AGesithCastle::GetAvailableCount() const
