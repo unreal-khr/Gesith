@@ -10,6 +10,7 @@
 class UBoxComponent;
 class UStaticMeshComponent;
 class ACombatCharacter;
+class APlayerState;
 
 DECLARE_MULTICAST_DELEGATE(FOnCastleChanged);
 
@@ -80,6 +81,22 @@ public:
 	/** Soldiers belonging to this castle */
 	UPROPERTY(VisibleAnywhere, ReplicatedUsing=OnRep_CastleChanged, Category="Castle")
 	TArray<FSoldierRecord> Roster;
+
+	/** Player who rules the castle. Null while the castle has no lord */
+	UPROPERTY(VisibleAnywhere, ReplicatedUsing=OnRep_CastleChanged, Category="Castle|Lord")
+	TObjectPtr<APlayerState> Lord;
+
+	/** Players who serve the lord as knights */
+	UPROPERTY(VisibleAnywhere, ReplicatedUsing=OnRep_CastleChanged, Category="Castle|Lord")
+	TArray<TObjectPtr<APlayerState>> Knights;
+
+	/** When knights may manage the castle */
+	UPROPERTY(EditAnywhere, ReplicatedUsing=OnRep_CastleChanged, Category="Castle|Lord")
+	EKnightPermission KnightPermission = EKnightPermission::Always;
+
+	/** True while the lord's character is inside the castle. Kept on the server so every player knows, however far away */
+	UPROPERTY(VisibleAnywhere, ReplicatedUsing=OnRep_CastleChanged, Category="Castle|Lord")
+	bool bLordInCastle = false;
 
 	/** Team the castle's soldiers fight for */
 	UPROPERTY(EditAnywhere, Category="Castle")
@@ -223,6 +240,21 @@ public:
 	/** Returns the gold it costs to recruit a soldier */
 	int32 GetRecruitCost() const { return RecruitCost; }
 
+	/** Returns true if the player may manage the castle right now, following the knight permission */
+	bool CanManage(const APlayerState* Player) const;
+
+	/** Returns true if the player serves this castle's lord as a knight */
+	bool IsKnight(const APlayerState* Player) const;
+
+	/** Makes the player lord of a castle that has none. Server only */
+	bool Claim(APlayerState* Player);
+
+	/** Names a player a knight of this castle, or dismisses them. Server only */
+	void SetKnight(APlayerState* Player, bool bKnight);
+
+	/** Changes when knights may manage the castle. Server only */
+	void SetKnightPermission(EKnightPermission NewPermission);
+
 	/** Returns how many soldiers are in the castle */
 	int32 GetAvailableCount() const;
 
@@ -273,6 +305,9 @@ protected:
 
 	/** Spawns characters for soldiers that don't have one and removes characters of soldiers who left the roster */
 	void SyncSoldierPawns();
+
+	/** Drops players who left the game and checks whether the lord is home */
+	void SyncLordship();
 
 	/** Returns the class used for soldier characters, or nullptr if none is known yet */
 	UClass* FindSoldierClass() const;

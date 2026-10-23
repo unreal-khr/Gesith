@@ -14,6 +14,8 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
 
 #define LOCTEXT_NAMESPACE "CastleMenu"
 
@@ -47,7 +49,7 @@ void UCastleSoldierRow::NativeOnInitialized()
 	PromoteButton->OnClicked.AddDynamic(this, &UCastleSoldierRow::HandlePromoteClicked);
 }
 
-void UCastleSoldierRow::Setup(UCastleMenuWidget* InMenu, const FSoldierRecord& Soldier, bool bCanPromote, float NextRankThreshold)
+void UCastleSoldierRow::Setup(UCastleMenuWidget* InMenu, const FSoldierRecord& Soldier, bool bCanPromote, float NextRankThreshold, bool bCanManage)
 {
 	Menu = InMenu;
 	SoldierId = Soldier.Id;
@@ -77,11 +79,11 @@ void UCastleSoldierRow::Setup(UCastleMenuWidget* InMenu, const FSoldierRecord& S
 		Promotion,
 		Status));
 
-	TrainButton->SetIsEnabled(Soldier.IsAvailable() || bTraining);
+	TrainButton->SetIsEnabled(bCanManage && (Soldier.IsAvailable() || bTraining));
 
 	TrainButtonText->SetText(bTraining ? LOCTEXT("StopTraining", "훈련 중 (멈추기)") : LOCTEXT("StartTraining", "훈련 보내기"));
 
-	PromoteButton->SetIsEnabled(bCanPromote);
+	PromoteButton->SetIsEnabled(bCanManage && bCanPromote);
 }
 
 void UCastleSoldierRow::HandleTrainClicked()
@@ -97,6 +99,51 @@ void UCastleSoldierRow::HandlePromoteClicked()
 	if (Menu.IsValid())
 	{
 		Menu->RequestPromote(SoldierId);
+	}
+}
+
+void UCastlePlayerRow::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+
+	UHorizontalBox* RowBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+	WidgetTree->RootWidget = RowBox;
+
+	NameText = UCastleMenuWidget::MakeText(this, FText::GetEmpty());
+
+	if (UHorizontalBoxSlot* NameSlot = RowBox->AddChildToHorizontalBox(NameText))
+	{
+		NameSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		NameSlot->SetVerticalAlignment(VAlign_Center);
+	}
+
+	UTextBlock* KnightLabel = nullptr;
+
+	UButton* KnightButton = UCastleMenuWidget::MakeButton(this, FText::GetEmpty(), KnightLabel);
+	KnightButtonText = KnightLabel;
+	KnightButton->OnClicked.AddDynamic(this, &UCastlePlayerRow::HandleKnightClicked);
+
+	RowBox->AddChildToHorizontalBox(KnightButton)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+}
+
+void UCastlePlayerRow::Setup(UCastleMenuWidget* InMenu, APlayerState* InPlayer, bool bIsKnight)
+{
+	Menu = InMenu;
+	Player = InPlayer;
+	bKnight = bIsKnight;
+
+	NameText->SetText(bKnight
+		? FText::Format(LOCTEXT("KnightName", "{0}  [기사]"), FText::FromString(InPlayer->GetPlayerName()))
+		: FText::FromString(InPlayer->GetPlayerName()));
+
+	KnightButtonText->SetText(bKnight ? LOCTEXT("RevokeKnight", "기사 해임") : LOCTEXT("GrantKnight", "기사 임명"));
+}
+
+void UCastlePlayerRow::HandleKnightClicked()
+{
+	if (Menu.IsValid() && Player.IsValid())
+	{
+		Menu->RequestSetKnight(Player.Get(), !bKnight);
 	}
 }
 
@@ -150,8 +197,59 @@ void UCastleMenuWidget::NativeOnInitialized()
 	WarningText = MakeText(this, FText::GetEmpty());
 	WarningText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.35f, 0.25f)));
 
+	LordText = MakeText(this, FText::GetEmpty());
+	AccessText = MakeText(this, FText::GetEmpty(), 13);
+
 	Content->AddChildToVerticalBox(TitleText);
-	Content->AddChildToVerticalBox(ResourcesText)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+	Content->AddChildToVerticalBox(LordText)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+	Content->AddChildToVerticalBox(AccessText);
+
+	// anyone can claim a castle without a lord
+	UTextBlock* ClaimLabel = nullptr;
+
+	ClaimButton = MakeButton(this, LOCTEXT("Claim", "이 성의 영주 되기"), ClaimLabel);
+	ClaimButton->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandleClaimClicked);
+
+	if (UVerticalBoxSlot* ClaimSlot = Content->AddChildToVerticalBox(ClaimButton))
+	{
+		ClaimSlot->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+		ClaimSlot->SetHorizontalAlignment(HAlign_Left);
+	}
+
+	// the lord picks when knights may manage the castle, and who the knights are
+	LordPanel = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	Content->AddChildToVerticalBox(LordPanel)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+
+	LordPanel->AddChildToVerticalBox(MakeText(this, LOCTEXT("PermissionHeader", "기사의 성 관리 권한"), 13));
+
+	UHorizontalBox* PermissionBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+	LordPanel->AddChildToVerticalBox(PermissionBox)->SetPadding(FMargin(0.0f, 2.0f));
+
+	const FText PermissionLabels[] = {
+		LOCTEXT("PermissionAlways", "항상 가능"),
+		LOCTEXT("PermissionLordAway", "영주 부재 시만"),
+		LOCTEXT("PermissionNever", "불가")
+	};
+
+	for (const FText& Label : PermissionLabels)
+	{
+		UTextBlock* PermissionLabel = nullptr;
+		UButton* PermissionButton = MakeButton(this, Label, PermissionLabel);
+
+		PermissionBox->AddChildToHorizontalBox(PermissionButton)->SetPadding(FMargin(0.0f, 0.0f, 4.0f, 0.0f));
+		PermissionButtons.Add(PermissionButton);
+	}
+
+	PermissionButtons[0]->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandlePermissionAlwaysClicked);
+	PermissionButtons[1]->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandlePermissionLordAwayClicked);
+	PermissionButtons[2]->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandlePermissionNeverClicked);
+
+	LordPanel->AddChildToVerticalBox(MakeText(this, LOCTEXT("KnightHeader", "기사 임명"), 13))->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+
+	KnightBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	LordPanel->AddChildToVerticalBox(KnightBox);
+
+	Content->AddChildToVerticalBox(ResourcesText)->SetPadding(FMargin(0.0f, 10.0f, 0.0f, 0.0f));
 	Content->AddChildToVerticalBox(WarningText);
 
 	UTextBlock* RecruitLabel = nullptr;
@@ -235,6 +333,49 @@ void UCastleMenuWidget::Refresh()
 
 	TitleText->SetText(FText::Format(LOCTEXT("Title", "{0}  -  {1}일째"), FText::FromString(Castle->CastleName), FText::AsNumber(Castle->Day)));
 
+	// who rules here, and what this player may do
+	APlayerState* Me = GetOwningPlayerState();
+	const bool bIsLord = Me && Castle->Lord == Me;
+	const bool bCanManage = Castle->CanManage(Me);
+
+	const FText LordName = Castle->Lord ? FText::FromString(Castle->Lord->GetPlayerName()) : LOCTEXT("NoLord", "없음");
+	const FText MyRole = bIsLord ? LOCTEXT("RoleLord", "영주") : Castle->IsKnight(Me) ? LOCTEXT("RoleKnight", "기사") : LOCTEXT("RoleVisitor", "방문자");
+
+	LordText->SetText(FText::Format(LOCTEXT("LordInfo", "영주: {0}   내 역할: {1}"), LordName, MyRole));
+
+	FText Access;
+
+	if (!Castle->Lord)
+	{
+		Access = LOCTEXT("AccessNoLord", "영주가 없는 성이에요. 영주가 되면 관리할 수 있어요.");
+	}
+	else if (bCanManage)
+	{
+		Access = LOCTEXT("AccessYes", "이 성을 관리할 수 있어요.");
+	}
+	else if (Castle->IsKnight(Me) && Castle->KnightPermission == EKnightPermission::LordAway)
+	{
+		Access = LOCTEXT("AccessLordHome", "영주가 성에 있어서 지금은 관리할 수 없어요.");
+	}
+	else
+	{
+		Access = LOCTEXT("AccessNo", "이 성을 관리할 권한이 없어요.");
+	}
+
+	AccessText->SetText(Access);
+	AccessText->SetColorAndOpacity(FSlateColor(bCanManage ? FLinearColor(0.5f, 1.0f, 0.5f) : FLinearColor(1.0f, 0.8f, 0.4f)));
+
+	ClaimButton->SetVisibility(Castle->Lord ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	LordPanel->SetVisibility(bIsLord ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
+	// the current permission is shown as the one button that can't be pressed
+	for (int32 Index = 0; Index < PermissionButtons.Num(); ++Index)
+	{
+		PermissionButtons[Index]->SetIsEnabled(static_cast<int32>(Castle->KnightPermission) != Index);
+	}
+
+	RefreshKnights();
+
 	ResourcesText->SetText(FText::Format(
 		LOCTEXT("Resources", "금 {0}   식량 {1}   병사 {2}명   하루 급여 금 {3}"),
 		FText::AsNumber(Castle->Gold),
@@ -259,12 +400,12 @@ void UCastleMenuWidget::Refresh()
 	WarningText->SetVisibility(Warnings.Num() > 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 
 	RecruitButtonText->SetText(FText::Format(LOCTEXT("Recruit", "병사 모집 (금 {0})"), FText::AsNumber(Castle->GetRecruitCost())));
-	RecruitButton->SetIsEnabled(Castle->Gold >= Castle->GetRecruitCost());
+	RecruitButton->SetIsEnabled(bCanManage && Castle->Gold >= Castle->GetRecruitCost());
 
 	const int32 Available = Castle->GetAvailableCount();
 
 	MusterButtonText->SetText(FText::Format(LOCTEXT("Muster", "병사 소집 ({0}명)"), FText::AsNumber(Available)));
-	MusterButton->SetIsEnabled(Available > 0);
+	MusterButton->SetIsEnabled(bCanManage && Available > 0);
 	DismissButton->SetIsEnabled(Castle->HasSoldiersInField());
 
 	// rebuild the roster rows
@@ -276,7 +417,7 @@ void UCastleMenuWidget::Refresh()
 
 		if (Row)
 		{
-			Row->Setup(this, Soldier, Castle->CanPromote(Soldier), Castle->GetNextRankThreshold(Soldier));
+			Row->Setup(this, Soldier, Castle->CanPromote(Soldier), Castle->GetNextRankThreshold(Soldier), bCanManage);
 			RosterBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 2.0f));
 		}
 	}
@@ -295,6 +436,91 @@ void UCastleMenuWidget::HandleMusterClicked()
 	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
 	{
 		PC->ServerCastleMuster(Castle.Get());
+	}
+}
+
+void UCastleMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	const AGameStateBase* GameState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+
+	if (GameState && GameState->PlayerArray.Num() != LastPlayerCount)
+	{
+		RefreshKnights();
+	}
+}
+
+void UCastleMenuWidget::RefreshKnights()
+{
+	const AGameStateBase* GameState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+
+	if (!Castle.IsValid() || !GameState)
+	{
+		return;
+	}
+
+	LastPlayerCount = GameState->PlayerArray.Num();
+
+	KnightBox->ClearChildren();
+
+	// every other player can be named a knight
+	for (APlayerState* Player : GameState->PlayerArray)
+	{
+		if (!Player || Player == Castle->Lord)
+		{
+			continue;
+		}
+
+		if (UCastlePlayerRow* Row = CreateWidget<UCastlePlayerRow>(this, UCastlePlayerRow::StaticClass()))
+		{
+			Row->Setup(this, Player, Castle->IsKnight(Player));
+			KnightBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 2.0f));
+		}
+	}
+
+	if (KnightBox->GetChildrenCount() == 0)
+	{
+		KnightBox->AddChildToVerticalBox(MakeText(this, LOCTEXT("NoPlayers", "접속한 다른 플레이어가 없어요."), 12));
+	}
+}
+
+void UCastleMenuWidget::HandleClaimClicked()
+{
+	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
+	{
+		PC->ServerCastleClaim(Castle.Get());
+	}
+}
+
+void UCastleMenuWidget::HandlePermissionAlwaysClicked()
+{
+	RequestKnightPermission(EKnightPermission::Always);
+}
+
+void UCastleMenuWidget::HandlePermissionLordAwayClicked()
+{
+	RequestKnightPermission(EKnightPermission::LordAway);
+}
+
+void UCastleMenuWidget::HandlePermissionNeverClicked()
+{
+	RequestKnightPermission(EKnightPermission::Never);
+}
+
+void UCastleMenuWidget::RequestKnightPermission(EKnightPermission Permission)
+{
+	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
+	{
+		PC->ServerCastleSetKnightPermission(Castle.Get(), Permission);
+	}
+}
+
+void UCastleMenuWidget::RequestSetKnight(APlayerState* Player, bool bKnight)
+{
+	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
+	{
+		PC->ServerCastleSetKnight(Castle.Get(), Player, bKnight);
 	}
 }
 

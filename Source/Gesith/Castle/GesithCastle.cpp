@@ -11,6 +11,7 @@
 #include "CombatCharacter.h"
 #include "CombatSoldierAIController.h"
 #include "EngineUtils.h"
+#include "GameFramework/PlayerState.h"
 
 AGesithCastle::AGesithCastle()
 {
@@ -131,6 +132,7 @@ void AGesithCastle::Tick(float DeltaSeconds)
 		PawnSyncTimer = 1.0f;
 
 		SyncSoldierPawns();
+		SyncLordship();
 	}
 
 	DayTimer += DeltaSeconds;
@@ -250,6 +252,119 @@ int32 AGesithCastle::GetDailyWages() const
 	}
 
 	return Total;
+}
+
+bool AGesithCastle::CanManage(const APlayerState* Player) const
+{
+	if (!Player || !Lord)
+	{
+		return false;
+	}
+
+	if (Player == Lord.Get())
+	{
+		return true;
+	}
+
+	if (!IsKnight(Player))
+	{
+		return false;
+	}
+
+	switch (KnightPermission)
+	{
+	case EKnightPermission::Always: return true;
+	case EKnightPermission::LordAway: return !bLordInCastle;
+	default: return false;
+	}
+}
+
+bool AGesithCastle::IsKnight(const APlayerState* Player) const
+{
+	return Player && Knights.ContainsByPredicate([Player](const TObjectPtr<APlayerState>& Knight) { return Knight.Get() == Player; });
+}
+
+bool AGesithCastle::Claim(APlayerState* Player)
+{
+	if (!HasAuthority() || !Player || Lord)
+	{
+		return false;
+	}
+
+	// a knight who takes an empty castle stops being a knight of it
+	Knights.Remove(Player);
+	Lord = Player;
+
+	SyncLordship();
+	NotifyChanged();
+
+	return true;
+}
+
+void AGesithCastle::SetKnight(APlayerState* Player, bool bKnight)
+{
+	if (!HasAuthority() || !Player || Player == Lord)
+	{
+		return;
+	}
+
+	if (bKnight)
+	{
+		Knights.AddUnique(Player);
+	}
+	else
+	{
+		Knights.Remove(Player);
+	}
+
+	NotifyChanged();
+}
+
+void AGesithCastle::SetKnightPermission(EKnightPermission NewPermission)
+{
+	if (!HasAuthority() || KnightPermission == NewPermission)
+	{
+		return;
+	}
+
+	KnightPermission = NewPermission;
+
+	NotifyChanged();
+}
+
+void AGesithCastle::SyncLordship()
+{
+	bool bChanged = false;
+
+	// players who left the game lose their place
+	if (Lord && !IsValid(Lord))
+	{
+		Lord = nullptr;
+		bChanged = true;
+	}
+
+	bChanged |= Knights.RemoveAll([](const TObjectPtr<APlayerState>& Knight) { return !IsValid(Knight); }) > 0;
+
+	// a castle without a lord has no knights either
+	if (!Lord && Knights.Num() > 0)
+	{
+		Knights.Reset();
+		bChanged = true;
+	}
+
+	const APawn* LordPawn = Lord ? Lord->GetPawn() : nullptr;
+	const bool bLordHome = LordPawn && IsInsideCastle(LordPawn->GetActorLocation());
+
+	if (bLordHome != bLordInCastle)
+	{
+		bLordInCastle = bLordHome;
+		bChanged = true;
+	}
+
+	if (bChanged)
+	{
+		NotifyChanged();
+	}
 }
 
 bool AGesithCastle::HasSoldiersInField() const
@@ -664,4 +779,8 @@ void AGesithCastle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AGesithCastle, UnpaidGoldDays);
 	DOREPLIFETIME(AGesithCastle, UnpaidFoodDays);
 	DOREPLIFETIME(AGesithCastle, Roster);
+	DOREPLIFETIME(AGesithCastle, Lord);
+	DOREPLIFETIME(AGesithCastle, Knights);
+	DOREPLIFETIME(AGesithCastle, KnightPermission);
+	DOREPLIFETIME(AGesithCastle, bLordInCastle);
 }
