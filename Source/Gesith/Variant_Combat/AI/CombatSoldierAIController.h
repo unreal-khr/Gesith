@@ -46,6 +46,18 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Soldier", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
 	float BlockHoldTime = 0.8f;
 
+	/** Farthest distance a soldier shoots from. Farther targets are walked toward */
+	UPROPERTY(EditAnywhere, Category="Soldier|Ranged", meta = (ClampMin = 0, ClampMax = 10000, Units = "cm"))
+	float BowRange = 2500.0f;
+
+	/** Enemies closer than this make an archer put the bow away and draw a melee weapon */
+	UPROPERTY(EditAnywhere, Category="Soldier|Ranged", meta = (ClampMin = 0, ClampMax = 2000, Units = "cm"))
+	float BowMinRange = 400.0f;
+
+	/** Aim error as a fraction of the distance, for a fresh recruit. Weapon skill shrinks it */
+	UPROPERTY(EditAnywhere, Category="Soldier|Ranged", meta = (ClampMin = 0, ClampMax = 0.5))
+	float BowSpread = 0.04f;
+
 	/** How often the soldier looks for the nearest enemy */
 	UPROPERTY(EditAnywhere, Category="Soldier", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
 	float RetargetInterval = 0.5f;
@@ -167,6 +179,9 @@ protected:
 	/** True if the target was attacking on the last tick, so a new swing can be noticed */
 	bool bTargetWasAttacking = false;
 
+	/** Weapon skill from the roster, used for aim. 10 is a fresh recruit */
+	float WeaponSkill = 10.0f;
+
 public:
 
 	/** Constructor */
@@ -213,6 +228,15 @@ protected:
 
 	/** Walks toward the target, then attacks and guards */
 	void FightTarget(ACombatCharacter* Soldier, float DeltaTime, float Now);
+
+	/** Stands and shoots at the target, walking closer if it's out of range */
+	void ShootTarget(ACombatCharacter* Soldier, float DeltaTime, float Now);
+
+	/** Takes out a ranged or melee weapon if one is carried. Returns true once the right kind is in hand */
+	bool UseWeapon(ACombatCharacter* Soldier, bool bRanged) const;
+
+	/** Returns true if the soldier's squad leader has ordered bows out */
+	bool IsRangedOrder() const;
 
 	/** Returns where this soldier stands in a formation whose front center is Origin */
 	FVector GetFormationSlot(const FVector& Origin, const FVector& Forward) const;

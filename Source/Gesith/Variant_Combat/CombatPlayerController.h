@@ -14,6 +14,7 @@ class ACombatCharacter;
 class AGesithCastle;
 class UCastleMenuWidget;
 class APlayerState;
+class UWeaponHUDWidget;
 
 /**
  *  Simple Player Controller for a third person combat game
@@ -81,6 +82,25 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> SquadChargeAction;
+
+	/** Key that switches the squad between melee and ranged */
+	UPROPERTY(EditAnywhere, Category="Input|Squad")
+	FKey SquadRangedKey = EKeys::F4;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SquadRangedAction;
+
+	/** Keys that take out the weapon in slots 1 to 4 */
+	UPROPERTY(EditAnywhere, Category="Input|Weapons")
+	TArray<FKey> WeaponSlotKeys = { EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four };
+
+	/** Weapon slot inputs, created at runtime like the castle menu input */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UInputAction>> WeaponSlotActions;
+
+	/** Weapon bar along the bottom of the screen */
+	UPROPERTY(Transient)
+	TObjectPtr<UWeaponHUDWidget> WeaponHUDWidget;
 
 	/** Castle menu while it's open */
 	UPROPERTY(Transient)
@@ -150,6 +170,10 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerSquadOrder(ESquadOrder Order);
 
+	/** Asks the server to switch the squad between melee and ranged */
+	UFUNCTION(Server, Reliable)
+	void ServerSquadRanged(bool bRanged);
+
 	/** Console command: opens or closes the castle menu, same as the castle menu key */
 	UFUNCTION(Exec)
 	void CastleMenu();
@@ -160,6 +184,17 @@ protected:
 	void OrderSquadFollow();
 	void OrderSquadHold();
 	void OrderSquadCharge();
+
+	void ToggleSquadRanged();
+
+	/** Weapon slot inputs */
+	void SelectWeapon1();
+	void SelectWeapon2();
+	void SelectWeapon3();
+	void SelectWeapon4();
+
+	/** Takes out the weapon in a slot on the controlled character */
+	void SelectWeapon(int32 Slot);
 
 	/** Shows the order on screen and sends it to the server */
 	void GiveSquadOrder(ESquadOrder Order);

@@ -7,6 +7,7 @@
 #include "CombatAttacker.h"
 #include "CombatDamageable.h"
 #include "Animation/AnimInstance.h"
+#include "GesithWeaponTypes.h"
 #include "CombatCharacter.generated.h"
 
 class USpringArmComponent;
@@ -16,6 +17,8 @@ struct FInputActionValue;
 class UCombatLifeBar;
 class UWidgetComponent;
 class AGesithCastle;
+class AGesithArrow;
+class UStaticMeshComponent;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
 
@@ -23,6 +26,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
  *  An enhanced Third Person Character with networked melee combat capabilities:
  *  - Combo attack string, hit detection runs on the server only
  *  - Guard input: hold to block with a shield, or tap to parry without one
+ *  - Four weapon slots: melee weapons swing, the bow is drawn and shot
  *  - Replicated HP, damage reaction and death
  *  - Respawning
  */
@@ -42,7 +46,20 @@ class ACombatCharacter : public ACharacter, public ICombatAttacker, public IComb
 	/** Life bar widget component */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	UWidgetComponent* LifeBar;
-	
+
+	/** Placeholder mesh of the weapon in hand */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	UStaticMeshComponent* WeaponMesh;
+
+	/** Placeholder shield mesh, shown while a one handed weapon is in hand */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	UStaticMeshComponent* ShieldMesh;
+
+public:
+
+	/** Number of weapon slots, on the 1-4 keys */
+	static constexpr int32 WeaponSlotCount = 4;
+
 protected:
 
 	/** Jump Input Action */
@@ -99,15 +116,7 @@ protected:
 	/** If true, the character is currently playing an attack animation */
 	bool bIsAttacking = false;
 
-	/** Distance ahead of the character that melee attack sphere collision traces will extend */
-	UPROPERTY(EditAnywhere, Category="Melee Attack|Trace", meta = (ClampMin = 0, ClampMax = 500, Units="cm"))
-	float MeleeTraceDistance = 75.0f;
-
-	/** Radius of the sphere trace for melee attacks */
-	UPROPERTY(EditAnywhere, Category="Melee Attack|Trace", meta = (ClampMin = 0, ClampMax = 200, Units = "cm"))
-	float MeleeTraceRadius = 75.0f;
-
-	/** Amount of damage a melee attack will deal */
+	/** Base damage of an attack. The weapon in hand multiplies it */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Damage", meta = (ClampMin = 0, ClampMax = 100))
 	float MeleeDamage = 1.0f;
 
@@ -138,9 +147,84 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Melee Attack", meta = (ClampMin = 0.1, ClampMax = 3))
 	float AttackSpeed = 1.0f;
 
-	/** If true, the guard input blocks while held. If false, it attempts a parry when pressed */
+	/** If true, the character carries a shield and the guard input blocks while a one handed weapon is in hand. Otherwise it parries */
 	UPROPERTY(EditAnywhere, Category="Guard")
 	bool bHasShield = true;
+
+	/** Bone or socket the shield is attached to */
+	UPROPERTY(EditAnywhere, Category="Guard")
+	FName ShieldSocket = FName("lowerarm_l");
+
+	/** Shield placement relative to its socket */
+	UPROPERTY(EditAnywhere, Category="Guard")
+	FTransform ShieldTransform;
+
+	/** Weapon in each of the 1-4 slots */
+	UPROPERTY(EditAnywhere, Category="Weapons")
+	TArray<EGesithWeaponType> WeaponSlots;
+
+	/** How each kind of weapon fights and looks */
+	UPROPERTY(EditAnywhere, Category="Weapons")
+	TMap<EGesithWeaponType, FGesithWeaponStats> WeaponStats;
+
+	/** Slot of the weapon in hand. Only the server has the final say */
+	UPROPERTY(ReplicatedUsing=OnRep_CurrentWeaponSlot, BlueprintReadOnly, Category="Weapons")
+	int32 CurrentWeaponSlot = 0;
+
+	/** Time it takes to put one weapon away and take out another. No attacking or guarding meanwhile */
+	UPROPERTY(EditAnywhere, Category="Weapons", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
+	float WeaponSwapTime = 0.5f;
+
+	/** Local time at which the current weapon swap ends */
+	float SwapEndTime = 0.0f;
+
+	/** Arrows carried when full */
+	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 0, ClampMax = 200))
+	int32 MaxArrows = 30;
+
+	/** Arrows left. Refilled inside a castle that isn't an enemy's */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category="Weapons|Ranged")
+	int32 Arrows = 0;
+
+	/** Arrows released before this much of the draw are not shot */
+	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 0, ClampMax = 1))
+	float MinDrawFraction = 0.3f;
+
+	/** Arrow actor to shoot */
+	UPROPERTY(EditAnywhere, Category="Weapons|Ranged")
+	TSubclassOf<AGesithArrow> ArrowClass;
+
+	/** How often a character inside a castle checks whether to refill arrows */
+	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 0.1, ClampMax = 10, Units = "s"))
+	float ArrowRefillInterval = 1.0f;
+
+	/** Camera offset over the shoulder while a bow is in hand, so the crosshair isn't hidden behind the character */
+	UPROPERTY(EditAnywhere, Category="Weapons|Ranged")
+	FVector BowCameraOffset = FVector(0.0f, 60.0f, 50.0f);
+
+	/** Camera field of view while aiming with the guard input */
+	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 10, ClampMax = 120, Units = "deg"))
+	float AimFieldOfView = 55.0f;
+
+	/** True while the bow is being drawn */
+	bool bIsDrawing = false;
+
+	/** Local time at which the draw started */
+	float DrawStartTime = 0.0f;
+
+	/** Camera settings saved on BeginPlay, so aiming can restore them */
+	FVector DefaultCameraSocketOffset = FVector::ZeroVector;
+	float DefaultFieldOfView = 90.0f;
+
+	/** Rotation setting saved on BeginPlay. Drawing a bow turns the character with the camera instead */
+	bool bDefaultOrientRotationToMovement = true;
+
+	/** True while this character's squad fights with bows. Set by the leader's F4 key */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category="Squad")
+	bool bSquadRanged = false;
+
+	/** Checks for arrow refills. Server only */
+	FTimerHandle ArrowRefillTimer;
 
 	/** If true, the character is holding up a shield */
 	UPROPERTY(ReplicatedUsing=OnRep_IsBlocking, BlueprintReadOnly, Category="Guard")
@@ -238,6 +322,9 @@ protected:
 	/** Called for combo attack input */
 	void ComboAttackPressed();
 
+	/** Called for combo attack input released */
+	void ComboAttackReleased();
+
 	/** Called for guard input pressed */
 	void GuardPressed();
 
@@ -329,6 +416,61 @@ public:
 	/** Interrupts the current attack and stops the character from acting for a while. Server only */
 	void Stagger(float Duration);
 
+	/** Takes out the weapon in a slot, 0 to 3. Works on the owning client and the server */
+	UFUNCTION(BlueprintCallable, Category="Weapons")
+	void SelectWeaponSlot(int32 Slot);
+
+	/** Returns the slot of the weapon in hand */
+	int32 GetCurrentWeaponSlot() const { return CurrentWeaponSlot; }
+
+	/** Returns the weapon in a slot, or None */
+	EGesithWeaponType GetWeaponInSlot(int32 Slot) const;
+
+	/** Returns how a kind of weapon fights. Unknown kinds fight bare handed */
+	const FGesithWeaponStats& GetWeaponStats(EGesithWeaponType Type) const;
+
+	/** Returns how the weapon in hand fights */
+	const FGesithWeaponStats& GetCurrentWeaponStats() const { return GetWeaponStats(GetWeaponInSlot(CurrentWeaponSlot)); }
+
+	/** Returns the first slot holding a ranged or a melee weapon, or -1 */
+	int32 FindWeaponSlot(bool bRanged) const;
+
+	/** Returns true while putting one weapon away and taking out another */
+	bool IsSwappingWeapon() const;
+
+	/** Returns true if the shield is on the arm and can block */
+	bool HasShieldInHand() const;
+
+	/** Returns arrows left and the most that can be carried */
+	int32 GetArrows() const { return Arrows; }
+	int32 GetMaxArrows() const { return MaxArrows; }
+
+	/** Returns true while the bow is being drawn */
+	bool IsDrawingBow() const { return bIsDrawing; }
+
+	/** Returns how far the bow is drawn, from 0 to 1. 0 while not drawing */
+	float GetDrawFraction() const;
+
+	/** Returns true if this character's squad should fight with bows */
+	bool IsSquadRanged() const { return bSquadRanged; }
+
+	/** Switches this character's squad between melee and bows. Server only */
+	void SetSquadRanged(bool bRanged);
+
+	/** Lowers the bow without shooting */
+	void CancelDraw();
+
+	/** Shoots the drawn bow at a point. Server only, used by AI soldiers */
+	void ReleaseBowAt(const FVector& AimPoint);
+
+	/** Console command: turns and moves the placeholder weapon in hand on this screen only, to find a good fit */
+	UFUNCTION(Exec)
+	void WeaponPose(float Pitch, float Yaw, float Roll, float X = 0.0f, float Y = 0.0f, float Z = 0.0f);
+
+	/** Console command: turns and moves the placeholder shield on this screen only */
+	UFUNCTION(Exec)
+	void ShieldPose(float Pitch, float Yaw, float Roll, float X = 0.0f, float Y = 0.0f, float Z = 0.0f);
+
 protected:
 
 	/** Resets the character's current HP to maximum */
@@ -360,6 +502,56 @@ protected:
 
 	/** Prints a combat event on screen for testing. Does nothing in shipping builds */
 	void ShowCombatDebugMessage(const FString& Message, const FColor& Color) const;
+
+	/** Prints a message on the owning player's own screen only. Does nothing in shipping builds */
+	void ShowLocalMessage(const FString& Message, const FColor& Color) const;
+
+	/** Switches to a slot after the checks passed, on whichever machine runs it */
+	void ApplyWeaponSlot(int32 Slot);
+
+	/** Returns true if the character may take out the weapon in a slot right now */
+	bool CanSelectWeaponSlot(int32 Slot) const;
+
+	/** Shows the weapon in hand and the shield, and moves the camera for the bow */
+	void UpdateWeaponLook();
+
+	/** Starts drawing the bow */
+	void StartDraw();
+
+	/** Shoots the drawn bow at a point, or cancels if it wasn't drawn far enough. Server only */
+	void ReleaseDraw(const FVector& AimPoint);
+
+	/** Makes the character turn with the camera while drawing, and back afterwards */
+	void SetFaceCamera(bool bFaceCamera);
+
+	/** Zooms the camera in for aiming. Owning player only */
+	void SetAimZoom(bool bZoom);
+
+	/** Returns the point under the crosshair */
+	FVector GetCameraAimPoint() const;
+
+	/** Refills arrows inside a castle that isn't an enemy's. Server only */
+	void CheckArrowRefill();
+
+	/** Called on clients when the weapon in hand replicates */
+	UFUNCTION()
+	void OnRep_CurrentWeaponSlot();
+
+	/** Sends the weapon slot change to the server */
+	UFUNCTION(Server, Reliable)
+	void ServerSelectWeaponSlot(int32 Slot);
+
+	/** Puts the owner back to the server's weapon after a refused swap */
+	UFUNCTION(Client, Reliable)
+	void ClientRejectWeaponSlot(int32 Slot);
+
+	/** Tells the server the bow is being drawn */
+	UFUNCTION(Server, Reliable)
+	void ServerStartDraw();
+
+	/** Tells the server where the bow was released at */
+	UFUNCTION(Server, Reliable)
+	void ServerReleaseDraw(const FVector_NetQuantize& AimPoint);
 
 	/** Returns true if an attack coming from the provided actor is within the guard angle */
 	bool IsFacingAttacker(const AActor* Attacker) const;

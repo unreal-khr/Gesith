@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 
 #include "CombatCharacter.h"
@@ -20,6 +20,28 @@
 #include "EngineUtils.h"
 #include "CombatSoldierAIController.h"
 #include "GesithCastle.h"
+#include "GesithArrow.h"
+#include "Components/StaticMeshComponent.h"
+#include "UObject/ConstructorHelpers.h"
+
+#define LOCTEXT_NAMESPACE "CombatCharacter"
+
+namespace
+{
+	/** Stats used for an empty hand or an unknown weapon */
+	const FGesithWeaponStats BareHands;
+
+	/** Placeholder weapon helper: a basic shape stretched along the socket's Z axis, starting at the hand */
+	FGesithWeaponStats MakeWeapon(const FText& Name, UStaticMesh* Mesh, const FVector& Scale, float GripOffset)
+	{
+		FGesithWeaponStats Stats;
+		Stats.DisplayName = Name;
+		Stats.Mesh = Mesh;
+		Stats.MeshTransform = FTransform(FRotator::ZeroRotator, FVector(0.0f, 0.0f, GripOffset), Scale);
+
+		return Stats;
+	}
+}
 
 ACombatCharacter::ACombatCharacter()
 {
@@ -52,6 +74,54 @@ ACombatCharacter::ACombatCharacter()
 	LifeBar = CreateDefaultSubobject<UWidgetComponent>(TEXT("LifeBar"));
 	LifeBar->SetupAttachment(RootComponent);
 
+	// placeholder weapon and shield meshes, until real weapon art exists
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+
+	WeaponMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WeaponMesh"));
+	WeaponMesh->SetupAttachment(GetMesh(), FName("hand_r"));
+	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	ShieldMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShieldMesh"));
+	ShieldMesh->SetupAttachment(GetMesh(), ShieldSocket);
+	ShieldMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ShieldMesh->SetStaticMesh(CylinderMesh.Object);
+
+	// a round shield, flat against the forearm
+	ShieldTransform = FTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector(0.6f, 0.6f, 0.04f));
+
+	// the 1-4 slots. Every number is a starting point for balancing
+	WeaponSlots = { EGesithWeaponType::Sword, EGesithWeaponType::Spear, EGesithWeaponType::Bow, EGesithWeaponType::None };
+
+	// balanced, keeps the shield
+	FGesithWeaponStats Sword = MakeWeapon(LOCTEXT("Sword", "검"), CubeMesh.Object, FVector(0.01f, 0.06f, 0.9f), 45.0f);
+	WeaponStats.Add(EGesithWeaponType::Sword, Sword);
+
+	// long reach and slower swings, needs both hands
+	FGesithWeaponStats Spear = MakeWeapon(LOCTEXT("Spear", "창"), CylinderMesh.Object, FVector(0.04f, 0.04f, 2.0f), 60.0f);
+	Spear.bTwoHanded = true;
+	Spear.DamageMultiplier = 0.9f;
+	Spear.AttackSpeed = 0.85f;
+	Spear.Reach = 150.0f;
+	Spear.SwingRadius = 45.0f;
+	WeaponStats.Add(EGesithWeaponType::Spear, Spear);
+
+	// slow but heavy, keeps the shield
+	FGesithWeaponStats Axe = MakeWeapon(LOCTEXT("Axe", "도끼"), CylinderMesh.Object, FVector(0.05f, 0.05f, 0.75f), 30.0f);
+	Axe.DamageMultiplier = 1.5f;
+	Axe.AttackSpeed = 0.75f;
+	WeaponStats.Add(EGesithWeaponType::Axe, Axe);
+
+	// ranged, needs both hands. Held upright in the left hand
+	FGesithWeaponStats Bow = MakeWeapon(LOCTEXT("Bow", "활"), CylinderMesh.Object, FVector(0.03f, 0.03f, 1.3f), 0.0f);
+	Bow.bRanged = true;
+	Bow.bTwoHanded = true;
+	Bow.DamageMultiplier = 1.5f;
+	Bow.Socket = FName("hand_l");
+	WeaponStats.Add(EGesithWeaponType::Bow, Bow);
+
+	ArrowClass = AGesithArrow::StaticClass();
+
 	// set the player tag
 	Tags.Add(FName("Player"));
 
@@ -81,6 +151,12 @@ void ACombatCharacter::ComboAttackPressed()
 {
 	// route the input
 	DoComboAttackStart();
+}
+
+void ACombatCharacter::ComboAttackReleased()
+{
+	// route the input
+	DoComboAttackEnd();
 }
 
 void ACombatCharacter::GuardPressed()
@@ -127,6 +203,19 @@ void ACombatCharacter::DoLook(float Yaw, float Pitch)
 
 void ACombatCharacter::DoComboAttackStart()
 {
+	// a bow is drawn while the input is held and shot on release
+	if (GetCurrentWeaponStats().bRanged)
+	{
+		StartDraw();
+
+		if (bIsDrawing && !HasAuthority())
+		{
+			ServerStartDraw();
+		}
+
+		return;
+	}
+
 	// clients tell the server, which runs the same logic and decides what hits
 	if (!HasAuthority())
 	{
@@ -139,12 +228,44 @@ void ACombatCharacter::DoComboAttackStart()
 
 void ACombatCharacter::DoComboAttackEnd()
 {
-	// stub
+	if (!bIsDrawing)
+	{
+		return;
+	}
+
+	// players shoot where the crosshair points, AI soldiers aim with ReleaseBowAt instead
+	const FVector AimPoint = IsLocallyControlled() && IsPlayerControlled() ? GetCameraAimPoint() : GetActorLocation() + GetActorForwardVector() * 5000.0f;
+
+	if (HasAuthority())
+	{
+		ReleaseDraw(AimPoint);
+	}
+	else
+	{
+		// the server shoots the arrow, the client only stops drawing
+		CancelDraw();
+
+		ServerReleaseDraw(AimPoint);
+	}
 }
 
 void ACombatCharacter::DoGuardStart()
 {
-	if (bHasShield)
+	// with a bow the guard input aims instead
+	if (GetCurrentWeaponStats().bRanged)
+	{
+		SetAimZoom(true);
+
+		return;
+	}
+
+	// no guarding while taking out a weapon
+	if (IsSwappingWeapon())
+	{
+		return;
+	}
+
+	if (HasShieldInHand())
 	{
 		// raise the shield locally, then tell the server
 		SetBlocking(true);
@@ -170,7 +291,10 @@ void ACombatCharacter::DoGuardStart()
 
 void ACombatCharacter::DoGuardEnd()
 {
-	if (bHasShield)
+	SetAimZoom(false);
+
+	// lower the shield even if the weapon changed while it was up
+	if (bIsBlocking || HasShieldInHand())
 	{
 		// lower the shield locally, then tell the server
 		SetBlocking(false);
@@ -180,6 +304,331 @@ void ACombatCharacter::DoGuardEnd()
 			ServerSetBlocking(false);
 		}
 	}
+}
+
+void ACombatCharacter::SelectWeaponSlot(int32 Slot)
+{
+	if (!CanSelectWeaponSlot(Slot))
+	{
+		if (WeaponSlots.IsValidIndex(Slot) && WeaponSlots[Slot] == EGesithWeaponType::None)
+		{
+			ShowLocalMessage(FString::Printf(TEXT("Slot %d is empty"), Slot + 1), FColor::White);
+		}
+
+		return;
+	}
+
+	// swap locally right away, the server runs the same checks
+	ApplyWeaponSlot(Slot);
+
+	if (!HasAuthority())
+	{
+		ServerSelectWeaponSlot(Slot);
+	}
+}
+
+void ACombatCharacter::ServerSelectWeaponSlot_Implementation(int32 Slot)
+{
+	if (CanSelectWeaponSlot(Slot))
+	{
+		ApplyWeaponSlot(Slot);
+	}
+	else
+	{
+		// put the owner back to the weapon the server still has in hand
+		ClientRejectWeaponSlot(CurrentWeaponSlot);
+	}
+}
+
+void ACombatCharacter::ClientRejectWeaponSlot_Implementation(int32 Slot)
+{
+	CurrentWeaponSlot = Slot;
+	SwapEndTime = 0.0f;
+
+	UpdateWeaponLook();
+}
+
+bool ACombatCharacter::CanSelectWeaponSlot(int32 Slot) const
+{
+	return WeaponSlots.IsValidIndex(Slot) && WeaponSlots[Slot] != EGesithWeaponType::None && Slot != CurrentWeaponSlot
+		&& !IsDead() && !IsStaggered() && !bIsAttacking;
+}
+
+void ACombatCharacter::ApplyWeaponSlot(int32 Slot)
+{
+	// put the shield down and stop drawing before changing hands
+	SetBlocking(false);
+	CancelDraw();
+	SetAimZoom(false);
+
+	CurrentWeaponSlot = Slot;
+	SwapEndTime = GetWorld()->GetTimeSeconds() + WeaponSwapTime;
+
+	UpdateWeaponLook();
+
+	ShowLocalMessage(FString::Printf(TEXT("Weapon %d: %s"), Slot + 1, *GetCurrentWeaponStats().DisplayName.ToString()), FColor::White);
+}
+
+void ACombatCharacter::OnRep_CurrentWeaponSlot()
+{
+	// other players see the swap, and the owner gets corrected if the server refused it
+	SwapEndTime = GetWorld()->GetTimeSeconds() + WeaponSwapTime;
+
+	UpdateWeaponLook();
+}
+
+EGesithWeaponType ACombatCharacter::GetWeaponInSlot(int32 Slot) const
+{
+	return WeaponSlots.IsValidIndex(Slot) ? WeaponSlots[Slot] : EGesithWeaponType::None;
+}
+
+const FGesithWeaponStats& ACombatCharacter::GetWeaponStats(EGesithWeaponType Type) const
+{
+	const FGesithWeaponStats* Stats = WeaponStats.Find(Type);
+
+	return Stats ? *Stats : BareHands;
+}
+
+int32 ACombatCharacter::FindWeaponSlot(bool bRanged) const
+{
+	for (int32 Slot = 0; Slot < WeaponSlots.Num(); ++Slot)
+	{
+		if (WeaponSlots[Slot] != EGesithWeaponType::None && GetWeaponStats(WeaponSlots[Slot]).bRanged == bRanged)
+		{
+			return Slot;
+		}
+	}
+
+	return -1;
+}
+
+bool ACombatCharacter::IsSwappingWeapon() const
+{
+	return GetWorld()->GetTimeSeconds() < SwapEndTime;
+}
+
+bool ACombatCharacter::HasShieldInHand() const
+{
+	const FGesithWeaponStats& Stats = GetCurrentWeaponStats();
+
+	return bHasShield && !Stats.bTwoHanded && !Stats.bRanged;
+}
+
+float ACombatCharacter::GetDrawFraction() const
+{
+	if (!bIsDrawing)
+	{
+		return 0.0f;
+	}
+
+	return FMath::Clamp((GetWorld()->GetTimeSeconds() - DrawStartTime) / GetCurrentWeaponStats().DrawTime, 0.0f, 1.0f);
+}
+
+void ACombatCharacter::UpdateWeaponLook()
+{
+	const FGesithWeaponStats& Stats = GetCurrentWeaponStats();
+
+	WeaponMesh->SetStaticMesh(Stats.Mesh);
+	WeaponMesh->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, Stats.Socket);
+	WeaponMesh->SetRelativeTransform(Stats.MeshTransform);
+	WeaponMesh->SetVisibility(Stats.Mesh != nullptr);
+
+	ShieldMesh->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, ShieldSocket);
+	ShieldMesh->SetRelativeTransform(ShieldTransform);
+	ShieldMesh->SetVisibility(HasShieldInHand());
+
+	// look over the shoulder with a bow, so the crosshair isn't on the character's back
+	if (IsLocallyControlled() && IsPlayerControlled())
+	{
+		GetCameraBoom()->SocketOffset = Stats.bRanged ? BowCameraOffset : DefaultCameraSocketOffset;
+	}
+}
+
+void ACombatCharacter::StartDraw()
+{
+	if (bIsDrawing || IsDead() || IsStaggered() || IsSwappingWeapon() || !GetCurrentWeaponStats().bRanged)
+	{
+		return;
+	}
+
+	if (Arrows <= 0)
+	{
+		ShowLocalMessage(TEXT("Out of arrows. Refill inside a castle"), FColor::Orange);
+		return;
+	}
+
+	bIsDrawing = true;
+	DrawStartTime = GetWorld()->GetTimeSeconds();
+
+	SetFaceCamera(true);
+}
+
+void ACombatCharacter::CancelDraw()
+{
+	if (bIsDrawing)
+	{
+		bIsDrawing = false;
+
+		SetFaceCamera(false);
+	}
+}
+
+void ACombatCharacter::ServerStartDraw_Implementation()
+{
+	StartDraw();
+}
+
+void ACombatCharacter::ServerReleaseDraw_Implementation(const FVector_NetQuantize& AimPoint)
+{
+	ReleaseDraw(AimPoint);
+}
+
+void ACombatCharacter::SetSquadRanged(bool bRanged)
+{
+	if (HasAuthority())
+	{
+		bSquadRanged = bRanged;
+	}
+}
+
+void ACombatCharacter::ReleaseBowAt(const FVector& AimPoint)
+{
+	if (HasAuthority())
+	{
+		ReleaseDraw(AimPoint);
+	}
+}
+
+void ACombatCharacter::ReleaseDraw(const FVector& AimPoint)
+{
+	if (!bIsDrawing)
+	{
+		return;
+	}
+
+	const float DrawFraction = GetDrawFraction();
+
+	CancelDraw();
+
+	// let go too early and the arrow stays on the string
+	if (DrawFraction < MinDrawFraction || Arrows <= 0 || !ArrowClass)
+	{
+		return;
+	}
+
+	const FGesithWeaponStats& Stats = GetCurrentWeaponStats();
+
+	// leave from in front of the chest
+	const FVector Forward = GetActorForwardVector();
+	const FVector Muzzle = GetActorLocation() + FVector(0.0f, 0.0f, 50.0f) + Forward * 60.0f;
+
+	// never shoot backwards, even if the camera looks behind the character
+	FVector Direction = (AimPoint - Muzzle).GetSafeNormal();
+
+	if (FVector::DotProduct(Direction, Forward) < 0.0f)
+	{
+		Direction = Forward;
+	}
+
+	AGesithArrow* Arrow = GetWorld()->SpawnActorDeferred<AGesithArrow>(ArrowClass, FTransform(Direction.Rotation(), Muzzle), this, this, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+
+	if (!Arrow)
+	{
+		return;
+	}
+
+	// a half drawn bow shoots slower and hits softer
+	Arrow->Launch(MeleeDamage * Stats.DamageMultiplier * DrawFraction, Direction * Stats.ArrowSpeed * (0.5f + 0.5f * DrawFraction));
+	Arrow->FinishSpawning(FTransform(Direction.Rotation(), Muzzle));
+
+	--Arrows;
+}
+
+void ACombatCharacter::SetFaceCamera(bool bFaceCamera)
+{
+	// AI soldiers turn themselves toward their target
+	if (!IsPlayerControlled())
+	{
+		return;
+	}
+
+	bUseControllerRotationYaw = bFaceCamera;
+	GetCharacterMovement()->bOrientRotationToMovement = bFaceCamera ? false : bDefaultOrientRotationToMovement;
+}
+
+void ACombatCharacter::SetAimZoom(bool bZoom)
+{
+	if (IsLocallyControlled() && IsPlayerControlled())
+	{
+		GetFollowCamera()->SetFieldOfView(bZoom ? AimFieldOfView : DefaultFieldOfView);
+	}
+}
+
+FVector ACombatCharacter::GetCameraAimPoint() const
+{
+	const FVector Start = GetFollowCamera()->GetComponentLocation();
+	const FVector End = Start + GetFollowCamera()->GetForwardVector() * 20000.0f;
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	FHitResult Hit;
+
+	return GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, QueryParams) ? Hit.ImpactPoint : End;
+}
+
+void ACombatCharacter::CheckArrowRefill()
+{
+	if (Arrows >= MaxArrows || IsDead())
+	{
+		return;
+	}
+
+	for (TActorIterator<AGesithCastle> It(GetWorld()); It; ++It)
+	{
+		// an enemy castle doesn't hand out arrows
+		const bool bEnemyCastle = TeamId != 0 && It->TeamId != 0 && It->TeamId != TeamId;
+
+		if (!bEnemyCastle && It->IsInsideCastle(GetActorLocation()))
+		{
+			Arrows = MaxArrows;
+
+			ShowCombatDebugMessage(TEXT("Arrows refilled"), FColor::Green);
+
+			return;
+		}
+	}
+}
+
+void ACombatCharacter::WeaponPose(float Pitch, float Yaw, float Roll, float X, float Y, float Z)
+{
+#if !UE_BUILD_SHIPPING
+	FGesithWeaponStats* Stats = WeaponStats.Find(GetWeaponInSlot(CurrentWeaponSlot));
+
+	if (!Stats)
+	{
+		return;
+	}
+
+	Stats->MeshTransform.SetRotation(FRotator(Pitch, Yaw, Roll).Quaternion());
+	Stats->MeshTransform.SetLocation(FVector(X, Y, Z));
+
+	UpdateWeaponLook();
+
+	ShowLocalMessage(FString::Printf(TEXT("%s pose: Pitch %.0f Yaw %.0f Roll %.0f, X %.0f Y %.0f Z %.0f"), *Stats->DisplayName.ToString(), Pitch, Yaw, Roll, X, Y, Z), FColor::Green);
+#endif
+}
+
+void ACombatCharacter::ShieldPose(float Pitch, float Yaw, float Roll, float X, float Y, float Z)
+{
+#if !UE_BUILD_SHIPPING
+	ShieldTransform.SetRotation(FRotator(Pitch, Yaw, Roll).Quaternion());
+	ShieldTransform.SetLocation(FVector(X, Y, Z));
+
+	UpdateWeaponLook();
+
+	ShowLocalMessage(FString::Printf(TEXT("Shield pose: Pitch %.0f Yaw %.0f Roll %.0f, X %.0f Y %.0f Z %.0f"), Pitch, Yaw, Roll, X, Y, Z), FColor::Green);
+#endif
 }
 
 bool ACombatCharacter::IsStaggered() const
@@ -581,8 +1030,8 @@ void ACombatCharacter::UpdateLifeBar()
 
 void ACombatCharacter::HandleComboAttackInput()
 {
-	// ignore attack inputs while dead, staggered or holding up a shield
-	if (IsDead() || IsStaggered() || bIsBlocking)
+	// ignore attack inputs while dead, staggered, holding up a shield or taking out a weapon
+	if (IsDead() || IsStaggered() || bIsBlocking || IsSwappingWeapon() || GetCurrentWeaponStats().bRanged)
 	{
 		return;
 	}
@@ -622,7 +1071,9 @@ void ACombatCharacter::PlayComboAttackMontage()
 {
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 	{
-		const float MontageLength = AnimInstance->Montage_Play(ComboAttackMontage, AttackSpeed, EMontagePlayReturnType::MontageLength, 0.0f, true);
+		// real attack speed is the attack speed stat times the weapon's speed
+		const float PlayRate = AttackSpeed * GetCurrentWeaponStats().AttackSpeed;
+		const float MontageLength = AnimInstance->Montage_Play(ComboAttackMontage, PlayRate, EMontagePlayReturnType::MontageLength, 0.0f, true);
 
 		// subscribe to montage completed and interrupted events
 		if (MontageLength > 0.0f)
@@ -648,8 +1099,8 @@ void ACombatCharacter::AttackMontageEnded(UAnimMontage* Montage, bool bInterrupt
 
 void ACombatCharacter::SetBlocking(bool bNewBlocking)
 {
-	// can't raise the shield while dead, staggered or attacking
-	if (bNewBlocking && (IsDead() || IsStaggered() || bIsAttacking))
+	// can't raise the shield while dead, staggered, attacking or without a shield on the arm
+	if (bNewBlocking && (IsDead() || IsStaggered() || bIsAttacking || !HasShieldInHand()))
 	{
 		return;
 	}
@@ -734,7 +1185,11 @@ void ACombatCharacter::ServerSetBlocking_Implementation(bool bNewBlocking)
 
 void ACombatCharacter::ServerParry_Implementation()
 {
-	TryParry();
+	// the server only parries with weapons that can parry
+	if (!HasShieldInHand() && !GetCurrentWeaponStats().bRanged && !IsSwappingWeapon())
+	{
+		TryParry();
+	}
 }
 
 void ACombatCharacter::MulticastPlayComboAttack_Implementation()
@@ -781,6 +1236,16 @@ void ACombatCharacter::ShowCombatDebugMessage(const FString& Message, const FCol
 #endif
 }
 
+void ACombatCharacter::ShowLocalMessage(const FString& Message, const FColor& Color) const
+{
+#if !UE_BUILD_SHIPPING
+	if (GEngine && IsLocallyControlled() && IsPlayerControlled())
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, Color, Message);
+	}
+#endif
+}
+
 void ACombatCharacter::MulticastDealtDamage_Implementation(float Damage, const FVector_NetQuantize& ImpactPoint)
 {
 	// call the BP handler to play effects, etc.
@@ -817,8 +1282,9 @@ void ACombatCharacter::MulticastStagger_Implementation(float Duration)
 	// consume any cached input so the interrupted attack doesn't restart
 	CachedAttackInputTime = 0.0f;
 
-	// lower the shield
+	// lower the shield and the bow
 	SetBlocking(false);
+	CancelDraw();
 
 	// interrupt the attack
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
@@ -869,7 +1335,8 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 
 	// start at the provided socket location, sweep forward
 	const FVector TraceStart = GetMesh()->GetSocketLocation(DamageSourceBone);
-	const FVector TraceEnd = TraceStart + (GetActorForwardVector() * MeleeTraceDistance);
+	const FGesithWeaponStats& Weapon = GetCurrentWeaponStats();
+	const FVector TraceEnd = TraceStart + (GetActorForwardVector() * Weapon.Reach);
 
 	// check for pawn and world dynamic collision object types
 	FCollisionObjectQueryParams ObjectParams;
@@ -878,7 +1345,7 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 
 	// use a sphere shape for the sweep
 	FCollisionShape CollisionShape;
-	CollisionShape.SetSphere(MeleeTraceRadius);
+	CollisionShape.SetSphere(Weapon.SwingRadius);
 
 	// ignore self
 	FCollisionQueryParams QueryParams;
@@ -915,11 +1382,14 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 				// knock upwards and away from the impact normal
 				const FVector Impulse = (CurrentHit.ImpactNormal * -MeleeKnockbackImpulse) + (FVector::UpVector * MeleeLaunchImpulse);
 
+				// the weapon in hand scales the damage
+				const float Damage = MeleeDamage * Weapon.DamageMultiplier;
+
 				// pass the damage event to the actor
-				Damageable->ApplyDamage(MeleeDamage, this, CurrentHit.ImpactPoint, Impulse);
+				Damageable->ApplyDamage(Damage, this, CurrentHit.ImpactPoint, Impulse);
 
 				// play effects on every machine
-				MulticastDealtDamage(MeleeDamage, CurrentHit.ImpactPoint);
+				MulticastDealtDamage(Damage, CurrentHit.ImpactPoint);
 			}
 
 			// stop hitting things if a parry interrupted this attack
@@ -980,19 +1450,20 @@ void ACombatCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVe
 	// was the attack guarded?
 	if (IsFacingAttacker(DamageCauser))
 	{
-		// auto guard parries without a shield and blocks with one
-		const bool bAutoParry = bDebugAutoGuard && !bHasShield;
-		const bool bAutoBlock = bDebugAutoGuard && bHasShield;
+		// auto guard parries without a shield and blocks with one. Nothing guards while holding a bow
+		const bool bCanGuard = !GetCurrentWeaponStats().bRanged;
+		const bool bAutoParry = bDebugAutoGuard && bCanGuard && !HasShieldInHand();
+		const bool bAutoBlock = bDebugAutoGuard && HasShieldInHand();
+
+		// arrows can be blocked with a shield but not parried
+		ACombatCharacter* Attacker = Cast<ACombatCharacter>(DamageCauser);
 
 		// a parry stops the damage and staggers the attacker
-		if (bAutoParry || GetWorld()->GetTimeSeconds() < ParryWindowEndTime)
+		if (Attacker && (bAutoParry || GetWorld()->GetTimeSeconds() < ParryWindowEndTime))
 		{
 			ParryWindowEndTime = 0.0f;
 
-			if (ACombatCharacter* Attacker = Cast<ACombatCharacter>(DamageCauser))
-			{
-				Attacker->Stagger(ParryStaggerTime);
-			}
+			Attacker->Stagger(ParryStaggerTime);
 
 			MulticastGuardedAttack(true, DamageLocation);
 
@@ -1125,6 +1596,21 @@ void ACombatCharacter::BeginPlay()
 	// save the walk speed so blocking can restore it
 	DefaultWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
 
+	// save the camera and turning settings so the bow can restore them
+	DefaultCameraSocketOffset = GetCameraBoom()->SocketOffset;
+	DefaultFieldOfView = GetFollowCamera()->FieldOfView;
+	bDefaultOrientRotationToMovement = GetCharacterMovement()->bOrientRotationToMovement;
+
+	// show the weapon in hand
+	UpdateWeaponLook();
+
+	if (HasAuthority())
+	{
+		Arrows = MaxArrows;
+
+		GetWorld()->GetTimerManager().SetTimer(ArrowRefillTimer, this, &ACombatCharacter::CheckArrowRefill, ArrowRefillInterval, true, FMath::FRandRange(0.0f, ArrowRefillInterval));
+	}
+
 	// the server sets the HP, clients receive it through replication
 	if (HasAuthority())
 	{
@@ -1140,8 +1626,9 @@ void ACombatCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);
 
-	// clear the respawn timer
+	// clear the timers
 	GetWorld()->GetTimerManager().ClearTimer(RespawnTimer);
+	GetWorld()->GetTimerManager().ClearTimer(ArrowRefillTimer);
 }
 
 void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -1160,6 +1647,8 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 		// Combo Attack
 		EnhancedInputComponent->BindAction(ComboAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ComboAttackPressed);
+		EnhancedInputComponent->BindAction(ComboAttackAction, ETriggerEvent::Completed, this, &ACombatCharacter::ComboAttackReleased);
+		EnhancedInputComponent->BindAction(ComboAttackAction, ETriggerEvent::Canceled, this, &ACombatCharacter::ComboAttackReleased);
 
 		// Guard
 		EnhancedInputComponent->BindAction(GuardAction, ETriggerEvent::Started, this, &ACombatCharacter::GuardPressed);
@@ -1177,6 +1666,9 @@ void ACombatCharacter::NotifyControllerChanged()
 	{
 		PC->SetRespawnTransform(GetActorTransform());
 	}
+
+	// the camera only moves for the bow once the player controls this character
+	UpdateWeaponLook();
 }
 
 void ACombatCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -1188,4 +1680,10 @@ void ACombatCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 	DOREPLIFETIME(ACombatCharacter, bIsBlocking);
 	DOREPLIFETIME(ACombatCharacter, TeamId);
+
+	DOREPLIFETIME(ACombatCharacter, CurrentWeaponSlot);
+	DOREPLIFETIME(ACombatCharacter, Arrows);
+	DOREPLIFETIME_CONDITION(ACombatCharacter, bSquadRanged, COND_OwnerOnly);
 }
+
+#undef LOCTEXT_NAMESPACE
