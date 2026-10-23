@@ -183,13 +183,9 @@ protected:
 	/** Local time at which the current weapon swap ends */
 	float SwapEndTime = 0.0f;
 
-	/** Arrows carried when full. Soldiers carry more as their weapon skill and endurance grow. Replicated for the weapon bar */
+	/** Arrows carried when full. Will come from the quiver upgrade bought at the blacksmith. Replicated for the weapon bar */
 	UPROPERTY(EditAnywhere, Replicated, Category="Weapons|Ranged", meta = (ClampMin = 0, ClampMax = 200))
 	int32 MaxArrows = 20;
-
-	/** Arrows a soldier at the stat cap carries */
-	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 0, ClampMax = 200))
-	int32 MaxArrowsAtStatCap = 40;
 
 	/** Arrows left. Refilled inside a castle that isn't an enemy's */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Weapons|Ranged")
@@ -411,7 +407,7 @@ public:
 	/** Sends this character's soldiers from the castle back to their posts. Server only */
 	void DismissToCastle(AGesithCastle* Castle);
 
-	/** Scales HP, damage and arrows from a soldier's stats, and hands them their melee weapon. 10 is a fresh recruit. Server only */
+	/** Scales HP and damage from a soldier's stats, and hands them their melee weapon. 10 is a fresh recruit. Server only */
 	void ApplySoldierStats(const FSoldierRecord& Record);
 
 	/** Sets the one melee weapon this character carries in slot 1. Server only */

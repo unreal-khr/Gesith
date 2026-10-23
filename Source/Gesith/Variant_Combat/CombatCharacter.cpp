@@ -857,11 +857,6 @@ void ACombatCharacter::ApplySoldierStats(const FSoldierRecord& Record)
 	MaxHP = Defaults->MaxHP * (0.5f + Record.Health / 20.0f);
 	MeleeDamage = Defaults->MeleeDamage * (0.5f + Record.Strength / 20.0f);
 
-	// weapon skill and endurance each add half of the extra arrows, up to the stat cap (100). Stats are applied in the castle, so the quiver starts full
-	const float Growth = FMath::Clamp((Record.WeaponSkill - 10.0f) / 180.0f + (Record.Endurance - 10.0f) / 180.0f, 0.0f, 1.0f);
-	MaxArrows = FMath::RoundToInt(FMath::Lerp(static_cast<float>(Defaults->MaxArrows), static_cast<float>(MaxArrowsAtStatCap), Growth));
-	Arrows = MaxArrows;
-
 	SetMeleeWeapon(Record.MeleeWeapon);
 
 	ResetHP();
