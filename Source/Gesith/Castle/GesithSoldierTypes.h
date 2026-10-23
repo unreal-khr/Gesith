@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GesithWeaponTypes.h"
 #include "GesithSoldierTypes.generated.h"
 
 /** When the lord's knights may manage the castle. The lord always can */
@@ -63,6 +64,10 @@ struct FSoldierRecord
 
 	UPROPERTY(BlueprintReadOnly, Category="Soldier|Stats")
 	float WeaponSkill = 10.0f;
+
+	/** The one melee weapon this soldier fights with, next to the bow everyone carries. Recruits start with a sword */
+	UPROPERTY(BlueprintReadOnly, Category="Soldier")
+	EGesithWeaponType MeleeWeapon = EGesithWeaponType::Sword;
 
 	/** If true, the soldier spends their time at the training ground */
 	UPROPERTY(BlueprintReadOnly, Category="Soldier")

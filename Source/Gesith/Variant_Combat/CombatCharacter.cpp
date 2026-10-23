@@ -90,8 +90,8 @@ ACombatCharacter::ACombatCharacter()
 	// a round shield, flat against the forearm
 	ShieldTransform = FTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector(0.6f, 0.6f, 0.04f));
 
-	// the 1-4 slots. Every number is a starting point for balancing
-	WeaponSlots = { EGesithWeaponType::Sword, EGesithWeaponType::Spear, EGesithWeaponType::Bow, EGesithWeaponType::None };
+	// the 1-4 slots: one melee weapon and the bow. Every number is a starting point for balancing
+	WeaponSlots = { EGesithWeaponType::Sword, EGesithWeaponType::Bow, EGesithWeaponType::None, EGesithWeaponType::None };
 
 	// balanced, keeps the shield
 	FGesithWeaponStats Sword = MakeWeapon(LOCTEXT("Sword", "검"), CubeMesh.Object, FVector(0.01f, 0.06f, 0.9f), 45.0f);
@@ -843,7 +843,7 @@ void ACombatCharacter::DismissToCastle(AGesithCastle* Castle)
 	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers dismissed and went back to their posts"), Count), FColor::Green);
 }
 
-void ACombatCharacter::ApplySoldierStats(float Health, float Strength)
+void ACombatCharacter::ApplySoldierStats(const FSoldierRecord& Record)
 {
 	if (!HasAuthority())
 	{
@@ -854,10 +854,71 @@ void ACombatCharacter::ApplySoldierStats(float Health, float Strength)
 	const ACombatCharacter* Defaults = GetClass()->GetDefaultObject<ACombatCharacter>();
 
 	// a fresh recruit (10) fights like the base character, the stat cap (100) is much tougher
-	MaxHP = Defaults->MaxHP * (0.5f + Health / 20.0f);
-	MeleeDamage = Defaults->MeleeDamage * (0.5f + Strength / 20.0f);
+	MaxHP = Defaults->MaxHP * (0.5f + Record.Health / 20.0f);
+	MeleeDamage = Defaults->MeleeDamage * (0.5f + Record.Strength / 20.0f);
+
+	// weapon skill and endurance each add half of the extra arrows, up to the stat cap (100). Stats are applied in the castle, so the quiver starts full
+	const float Growth = FMath::Clamp((Record.WeaponSkill - 10.0f) / 180.0f + (Record.Endurance - 10.0f) / 180.0f, 0.0f, 1.0f);
+	MaxArrows = FMath::RoundToInt(FMath::Lerp(static_cast<float>(Defaults->MaxArrows), static_cast<float>(MaxArrowsAtStatCap), Growth));
+	Arrows = MaxArrows;
+
+	SetMeleeWeapon(Record.MeleeWeapon);
 
 	ResetHP();
+}
+
+void ACombatCharacter::SetMeleeWeapon(EGesithWeaponType Weapon)
+{
+	// only melee weapons go in slot 1
+	if (!HasAuthority() || Weapon == EGesithWeaponType::None || GetWeaponStats(Weapon).bRanged)
+	{
+		return;
+	}
+
+	MeleeWeapon = Weapon;
+
+	UpdateMeleeSlot();
+}
+
+void ACombatCharacter::UpdateMeleeSlot()
+{
+	if (WeaponSlots.IsValidIndex(0))
+	{
+		WeaponSlots[0] = MeleeWeapon;
+	}
+
+	UpdateWeaponLook();
+}
+
+void ACombatCharacter::OnRep_MeleeWeapon()
+{
+	UpdateMeleeSlot();
+}
+
+void ACombatCharacter::SetMelee(int32 WeaponNumber)
+{
+	if (HasAuthority())
+	{
+		ServerSetMelee_Implementation(WeaponNumber);
+	}
+	else
+	{
+		ServerSetMelee(WeaponNumber);
+	}
+}
+
+void ACombatCharacter::ServerSetMelee_Implementation(int32 WeaponNumber)
+{
+#if !UE_BUILD_SHIPPING
+	static const EGesithWeaponType MeleeWeapons[] = { EGesithWeaponType::Sword, EGesithWeaponType::Spear, EGesithWeaponType::Axe };
+
+	if (WeaponNumber >= 1 && WeaponNumber <= 3)
+	{
+		SetMeleeWeapon(MeleeWeapons[WeaponNumber - 1]);
+
+		ShowCombatDebugMessage(FString::Printf(TEXT("Melee weapon: %s"), *GetCurrentWeaponStats().DisplayName.ToString()), FColor::Green);
+	}
+#endif
 }
 
 TArray<ACombatCharacter*> ACombatCharacter::SpawnSquadMembers(int32 SquadSize)
@@ -1601,8 +1662,8 @@ void ACombatCharacter::BeginPlay()
 	DefaultFieldOfView = GetFollowCamera()->FieldOfView;
 	bDefaultOrientRotationToMovement = GetCharacterMovement()->bOrientRotationToMovement;
 
-	// show the weapon in hand
-	UpdateWeaponLook();
+	// slot 1 holds the melee weapon, then show the weapon in hand
+	UpdateMeleeSlot();
 
 	if (HasAuthority())
 	{
@@ -1683,6 +1744,8 @@ void ACombatCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 	DOREPLIFETIME(ACombatCharacter, CurrentWeaponSlot);
 	DOREPLIFETIME(ACombatCharacter, Arrows);
+	DOREPLIFETIME(ACombatCharacter, MaxArrows);
+	DOREPLIFETIME(ACombatCharacter, MeleeWeapon);
 	DOREPLIFETIME_CONDITION(ACombatCharacter, bSquadRanged, COND_OwnerOnly);
 }
 

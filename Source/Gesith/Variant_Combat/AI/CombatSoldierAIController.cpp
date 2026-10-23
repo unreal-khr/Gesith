@@ -36,7 +36,7 @@ void ACombatSoldierAIController::SetRosterSoldier(AGesithCastle* Castle, const F
 
 	if (ACombatCharacter* Soldier = Cast<ACombatCharacter>(GetPawn()))
 	{
-		Soldier->ApplySoldierStats(Record.Health, Record.Strength);
+		Soldier->ApplySoldierStats(Record);
 	}
 
 	// start from the class defaults so applying stats again after training doesn't stack

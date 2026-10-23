@@ -19,6 +19,7 @@ class UWidgetComponent;
 class AGesithCastle;
 class AGesithArrow;
 class UStaticMeshComponent;
+struct FSoldierRecord;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
 
@@ -159,9 +160,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Guard")
 	FTransform ShieldTransform;
 
-	/** Weapon in each of the 1-4 slots */
+	/** Weapon in each of the 1-4 slots. Slot 1 always holds MeleeWeapon */
 	UPROPERTY(EditAnywhere, Category="Weapons")
 	TArray<EGesithWeaponType> WeaponSlots;
+
+	/** The one melee weapon this character carries. Replicated so everyone sees a soldier's spear or axe */
+	UPROPERTY(EditAnywhere, ReplicatedUsing=OnRep_MeleeWeapon, Category="Weapons")
+	EGesithWeaponType MeleeWeapon = EGesithWeaponType::Sword;
 
 	/** How each kind of weapon fights and looks */
 	UPROPERTY(EditAnywhere, Category="Weapons")
@@ -178,9 +183,13 @@ protected:
 	/** Local time at which the current weapon swap ends */
 	float SwapEndTime = 0.0f;
 
-	/** Arrows carried when full */
+	/** Arrows carried when full. Soldiers carry more as their weapon skill and endurance grow. Replicated for the weapon bar */
+	UPROPERTY(EditAnywhere, Replicated, Category="Weapons|Ranged", meta = (ClampMin = 0, ClampMax = 200))
+	int32 MaxArrows = 20;
+
+	/** Arrows a soldier at the stat cap carries */
 	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 0, ClampMax = 200))
-	int32 MaxArrows = 30;
+	int32 MaxArrowsAtStatCap = 40;
 
 	/** Arrows left. Refilled inside a castle that isn't an enemy's */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Weapons|Ranged")
@@ -402,8 +411,15 @@ public:
 	/** Sends this character's soldiers from the castle back to their posts. Server only */
 	void DismissToCastle(AGesithCastle* Castle);
 
-	/** Scales HP and damage from a soldier's health and strength. 10 is a fresh recruit. Server only */
-	void ApplySoldierStats(float Health, float Strength);
+	/** Scales HP, damage and arrows from a soldier's stats, and hands them their melee weapon. 10 is a fresh recruit. Server only */
+	void ApplySoldierStats(const FSoldierRecord& Record);
+
+	/** Sets the one melee weapon this character carries in slot 1. Server only */
+	void SetMeleeWeapon(EGesithWeaponType Weapon);
+
+	/** Console command: changes your melee weapon for testing. 1 sword, 2 spear, 3 axe */
+	UFUNCTION(Exec)
+	void SetMelee(int32 WeaponNumber);
 
 	/** Console command: spawns an enemy line far in front of you that charges */
 	UFUNCTION(Exec)
@@ -532,6 +548,17 @@ protected:
 
 	/** Refills arrows inside a castle that isn't an enemy's. Server only */
 	void CheckArrowRefill();
+
+	/** Puts the melee weapon in slot 1 and refreshes the look */
+	void UpdateMeleeSlot();
+
+	/** Called on clients when the melee weapon replicates */
+	UFUNCTION()
+	void OnRep_MeleeWeapon();
+
+	/** Sends the melee weapon change to the server */
+	UFUNCTION(Server, Reliable)
+	void ServerSetMelee(int32 WeaponNumber);
 
 	/** Called on clients when the weapon in hand replicates */
 	UFUNCTION()
