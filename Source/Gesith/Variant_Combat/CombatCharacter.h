@@ -213,8 +213,15 @@ protected:
 	/** Local time at which the draw started */
 	float DrawStartTime = 0.0f;
 
+	/** How quickly the camera zooms in and out for aiming. Higher is faster */
+	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 1, ClampMax = 50))
+	float AimZoomSpeed = 10.0f;
+
 	/** Camera field of view saved on BeginPlay, so aiming can restore it */
 	float DefaultFieldOfView = 90.0f;
+
+	/** Field of view the camera is easing toward */
+	float TargetFieldOfView = 90.0f;
 
 	/** Rotation settings saved on BeginPlay. Holding a bow turns the character with the camera instead */
 	bool bDefaultOrientRotationToMovement = true;
@@ -726,6 +733,9 @@ protected:
 
 	/** Initialization */
 	virtual void BeginPlay() override;
+
+	/** Eases the aim zoom */
+	virtual void Tick(float DeltaSeconds) override;
 
 	/** Cleanup */
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

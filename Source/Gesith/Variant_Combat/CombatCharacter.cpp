@@ -579,7 +579,21 @@ void ACombatCharacter::SetAimZoom(bool bZoom)
 {
 	if (IsLocallyControlled() && IsPlayerControlled())
 	{
-		GetFollowCamera()->SetFieldOfView(bZoom ? AimFieldOfView : DefaultFieldOfView);
+		// Tick eases the camera toward this
+		TargetFieldOfView = bZoom ? AimFieldOfView : DefaultFieldOfView;
+	}
+}
+
+void ACombatCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	// ease the aim zoom in and out instead of snapping
+	UCameraComponent* Camera = GetFollowCamera();
+
+	if (IsLocallyControlled() && !FMath::IsNearlyEqual(Camera->FieldOfView, TargetFieldOfView, 0.01f))
+	{
+		Camera->SetFieldOfView(FMath::FInterpTo(Camera->FieldOfView, TargetFieldOfView, DeltaSeconds, AimZoomSpeed));
 	}
 }
 
@@ -1673,6 +1687,7 @@ void ACombatCharacter::BeginPlay()
 
 	// save the camera and turning settings so the bow can restore them
 	DefaultFieldOfView = GetFollowCamera()->FieldOfView;
+	TargetFieldOfView = DefaultFieldOfView;
 	bDefaultOrientRotationToMovement = GetCharacterMovement()->bOrientRotationToMovement;
 	bDefaultUseControllerRotationYaw = bUseControllerRotationYaw;
 
