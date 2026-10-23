@@ -457,12 +457,6 @@ void ACombatCharacter::UpdateWeaponLook()
 	ShieldMesh->SetVisibility(HasShieldInHand());
 
 	UpdateFacing();
-
-	// look over the shoulder with a bow, so the crosshair isn't on the character's back
-	if (IsLocallyControlled() && IsPlayerControlled())
-	{
-		GetCameraBoom()->SocketOffset = Stats.bRanged ? BowCameraOffset : DefaultCameraSocketOffset;
-	}
 }
 
 void ACombatCharacter::StartDraw()
@@ -1678,7 +1672,6 @@ void ACombatCharacter::BeginPlay()
 	DefaultWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
 
 	// save the camera and turning settings so the bow can restore them
-	DefaultCameraSocketOffset = GetCameraBoom()->SocketOffset;
 	DefaultFieldOfView = GetFollowCamera()->FieldOfView;
 	bDefaultOrientRotationToMovement = GetCharacterMovement()->bOrientRotationToMovement;
 	bDefaultUseControllerRotationYaw = bUseControllerRotationYaw;
@@ -1749,7 +1742,7 @@ void ACombatCharacter::NotifyControllerChanged()
 		PC->SetRespawnTransform(GetActorTransform());
 	}
 
-	// the camera only moves for the bow once the player controls this character
+	// the bow turns the character with the camera only once a player controls it
 	UpdateWeaponLook();
 }
 

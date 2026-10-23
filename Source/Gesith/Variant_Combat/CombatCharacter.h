@@ -203,10 +203,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 0.1, ClampMax = 10, Units = "s"))
 	float ArrowRefillInterval = 1.0f;
 
-	/** Camera offset over the shoulder while a bow is in hand, so the crosshair isn't hidden behind the character */
-	UPROPERTY(EditAnywhere, Category="Weapons|Ranged")
-	FVector BowCameraOffset = FVector(0.0f, 60.0f, 50.0f);
-
 	/** Camera field of view while aiming with the guard input */
 	UPROPERTY(EditAnywhere, Category="Weapons|Ranged", meta = (ClampMin = 10, ClampMax = 120, Units = "deg"))
 	float AimFieldOfView = 55.0f;
@@ -217,8 +213,7 @@ protected:
 	/** Local time at which the draw started */
 	float DrawStartTime = 0.0f;
 
-	/** Camera settings saved on BeginPlay, so aiming can restore them */
-	FVector DefaultCameraSocketOffset = FVector::ZeroVector;
+	/** Camera field of view saved on BeginPlay, so aiming can restore it */
 	float DefaultFieldOfView = 90.0f;
 
 	/** Rotation settings saved on BeginPlay. Holding a bow turns the character with the camera instead */
@@ -525,7 +520,7 @@ protected:
 	/** Returns true if the character may take out the weapon in a slot right now */
 	bool CanSelectWeaponSlot(int32 Slot) const;
 
-	/** Shows the weapon in hand and the shield, and moves the camera for the bow */
+	/** Shows the weapon in hand and the shield */
 	void UpdateWeaponLook();
 
 	/** Starts drawing the bow */
