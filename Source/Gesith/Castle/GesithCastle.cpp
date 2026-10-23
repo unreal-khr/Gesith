@@ -23,13 +23,14 @@ AGesithCastle::AGesithCastle()
 	RootComponent = CastleArea;
 
 	// grey box walls made from the engine cube
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMeshFinder(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	UStaticMesh* CubeMesh = CubeMeshFinder.Object;
 
-	auto MakeWall = [this, &CubeMesh](const TCHAR* Name)
+	auto MakeWall = [this, CubeMesh](const TCHAR* Name)
 	{
 		UStaticMeshComponent* Wall = CreateDefaultSubobject<UStaticMeshComponent>(Name);
 		Wall->SetupAttachment(RootComponent);
-		Wall->SetStaticMesh(CubeMesh.Object);
+		Wall->SetStaticMesh(CubeMesh);
 		return Wall;
 	};
 
@@ -143,7 +144,7 @@ bool AGesithCastle::Recruit()
 
 	FSoldierRecord Soldier;
 	Soldier.Id = NextSoldierId++;
-	Soldier.Name = Names[FMath::RandRange(0, UE_ARRAY_COUNT(Names) - 1)];
+	Soldier.Name = Names[FMath::RandRange(0, static_cast<int32>(UE_ARRAY_COUNT(Names)) - 1)];
 
 	// recruits start a little different from each other
 	for (int32 StatIndex = 0; StatIndex < 5; ++StatIndex)

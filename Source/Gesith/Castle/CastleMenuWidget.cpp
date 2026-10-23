@@ -34,7 +34,10 @@ void UCastleSoldierRow::NativeOnInitialized()
 
 	UTextBlock* PromoteLabel = nullptr;
 
-	TrainButton = UCastleMenuWidget::MakeButton(this, FText::GetEmpty(), TrainButtonText);
+	UTextBlock* TrainLabel = nullptr;
+
+	TrainButton = UCastleMenuWidget::MakeButton(this, FText::GetEmpty(), TrainLabel);
+	TrainButtonText = TrainLabel;
 	PromoteButton = UCastleMenuWidget::MakeButton(this, LOCTEXT("Promote", "승급"), PromoteLabel);
 
 	RowBox->AddChildToHorizontalBox(TrainButton)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
@@ -145,7 +148,10 @@ void UCastleMenuWidget::NativeOnInitialized()
 	Content->AddChildToVerticalBox(ResourcesText)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
 	Content->AddChildToVerticalBox(WarningText);
 
-	RecruitButton = MakeButton(this, FText::GetEmpty(), RecruitButtonText);
+	UTextBlock* RecruitLabel = nullptr;
+
+	RecruitButton = MakeButton(this, FText::GetEmpty(), RecruitLabel);
+	RecruitButtonText = RecruitLabel;
 	RecruitButton->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandleRecruitClicked);
 
 	if (UVerticalBoxSlot* RecruitSlot = Content->AddChildToVerticalBox(RecruitButton))
