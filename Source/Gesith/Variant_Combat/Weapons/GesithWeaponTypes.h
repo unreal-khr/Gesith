@@ -14,17 +14,26 @@ enum class EGesithWeaponType : uint8
 	/** Empty slot */
 	None,
 
-	/** One handed, balanced. Leaves the other hand free for a shield */
+	/** One handed sword with a shield. Balanced */
 	Sword,
 
-	/** Two handed, long reach, slower swings. No shield */
+	/** One handed spear with a shield. Longer reach, slower swings */
 	Spear,
 
-	/** One handed, slow but heavy hits. Leaves the other hand free for a shield */
+	/** One handed axe with a shield. Slow but heavy hits */
 	Axe,
 
 	/** Ranged. Hold attack to draw, release to shoot. No shield */
-	Bow
+	Bow,
+
+	/** Two handed sword. No shield, more damage and reach than the one handed sword */
+	GreatSword,
+
+	/** Two handed spear. No shield, the longest reach */
+	GreatSpear,
+
+	/** Two handed axe. No shield, the heaviest hits */
+	GreatAxe
 };
 
 /** How a weapon fights and looks. Every number is a starting point for balancing */

@@ -93,24 +93,43 @@ ACombatCharacter::ACombatCharacter()
 	// the 1-4 slots: one melee weapon and the bow. Every number is a starting point for balancing
 	WeaponSlots = { EGesithWeaponType::Sword, EGesithWeaponType::Bow, EGesithWeaponType::None, EGesithWeaponType::None };
 
-	// balanced, keeps the shield
-	FGesithWeaponStats Sword = MakeWeapon(LOCTEXT("Sword", "검"), CubeMesh.Object, FVector(0.01f, 0.06f, 0.9f), 45.0f);
+	// each melee line has a one handed version with a shield and a two handed version that trades the shield for damage and reach
+	FGesithWeaponStats Sword = MakeWeapon(LOCTEXT("Sword", "한손검"), CubeMesh.Object, FVector(0.01f, 0.06f, 0.9f), 45.0f);
 	WeaponStats.Add(EGesithWeaponType::Sword, Sword);
 
-	// long reach and slower swings, needs both hands
-	FGesithWeaponStats Spear = MakeWeapon(LOCTEXT("Spear", "창"), CylinderMesh.Object, FVector(0.04f, 0.04f, 2.0f), 60.0f);
-	Spear.bTwoHanded = true;
+	FGesithWeaponStats GreatSword = MakeWeapon(LOCTEXT("GreatSword", "양손검"), CubeMesh.Object, FVector(0.015f, 0.08f, 1.3f), 65.0f);
+	GreatSword.bTwoHanded = true;
+	GreatSword.DamageMultiplier = 1.4f;
+	GreatSword.AttackSpeed = 0.85f;
+	GreatSword.Reach = 95.0f;
+	WeaponStats.Add(EGesithWeaponType::GreatSword, GreatSword);
+
+	FGesithWeaponStats Spear = MakeWeapon(LOCTEXT("Spear", "한손창"), CylinderMesh.Object, FVector(0.035f, 0.035f, 1.6f), 50.0f);
 	Spear.DamageMultiplier = 0.9f;
-	Spear.AttackSpeed = 0.85f;
-	Spear.Reach = 150.0f;
+	Spear.AttackSpeed = 0.9f;
+	Spear.Reach = 120.0f;
 	Spear.SwingRadius = 45.0f;
 	WeaponStats.Add(EGesithWeaponType::Spear, Spear);
 
-	// slow but heavy, keeps the shield
-	FGesithWeaponStats Axe = MakeWeapon(LOCTEXT("Axe", "도끼"), CylinderMesh.Object, FVector(0.05f, 0.05f, 0.75f), 30.0f);
-	Axe.DamageMultiplier = 1.5f;
-	Axe.AttackSpeed = 0.75f;
+	FGesithWeaponStats GreatSpear = MakeWeapon(LOCTEXT("GreatSpear", "양손창"), CylinderMesh.Object, FVector(0.04f, 0.04f, 2.2f), 60.0f);
+	GreatSpear.bTwoHanded = true;
+	GreatSpear.DamageMultiplier = 1.2f;
+	GreatSpear.AttackSpeed = 0.8f;
+	GreatSpear.Reach = 170.0f;
+	GreatSpear.SwingRadius = 40.0f;
+	WeaponStats.Add(EGesithWeaponType::GreatSpear, GreatSpear);
+
+	FGesithWeaponStats Axe = MakeWeapon(LOCTEXT("Axe", "한손도끼"), CylinderMesh.Object, FVector(0.05f, 0.05f, 0.6f), 25.0f);
+	Axe.DamageMultiplier = 1.3f;
+	Axe.AttackSpeed = 0.8f;
 	WeaponStats.Add(EGesithWeaponType::Axe, Axe);
+
+	FGesithWeaponStats GreatAxe = MakeWeapon(LOCTEXT("GreatAxe", "양손도끼"), CylinderMesh.Object, FVector(0.06f, 0.06f, 1.1f), 45.0f);
+	GreatAxe.bTwoHanded = true;
+	GreatAxe.DamageMultiplier = 1.8f;
+	GreatAxe.AttackSpeed = 0.65f;
+	GreatAxe.Reach = 90.0f;
+	WeaponStats.Add(EGesithWeaponType::GreatAxe, GreatAxe);
 
 	// ranged, needs both hands. Held upright in the left hand
 	FGesithWeaponStats Bow = MakeWeapon(LOCTEXT("Bow", "활"), CylinderMesh.Object, FVector(0.03f, 0.03f, 1.3f), 0.0f);
@@ -905,9 +924,9 @@ void ACombatCharacter::SetMelee(int32 WeaponNumber)
 void ACombatCharacter::ServerSetMelee_Implementation(int32 WeaponNumber)
 {
 #if !UE_BUILD_SHIPPING
-	static const EGesithWeaponType MeleeWeapons[] = { EGesithWeaponType::Sword, EGesithWeaponType::Spear, EGesithWeaponType::Axe };
+	static const EGesithWeaponType MeleeWeapons[] = { EGesithWeaponType::Sword, EGesithWeaponType::GreatSword, EGesithWeaponType::Spear, EGesithWeaponType::GreatSpear, EGesithWeaponType::Axe, EGesithWeaponType::GreatAxe };
 
-	if (WeaponNumber >= 1 && WeaponNumber <= 3)
+	if (WeaponNumber >= 1 && WeaponNumber <= static_cast<int32>(UE_ARRAY_COUNT(MeleeWeapons)))
 	{
 		SetMeleeWeapon(MeleeWeapons[WeaponNumber - 1]);
 

@@ -413,7 +413,7 @@ public:
 	/** Sets the one melee weapon this character carries in slot 1. Server only */
 	void SetMeleeWeapon(EGesithWeaponType Weapon);
 
-	/** Console command: changes your melee weapon for testing. 1 sword, 2 spear, 3 axe */
+	/** Console command: changes your melee weapon for testing. 1 sword, 2 great sword, 3 spear, 4 great spear, 5 axe, 6 great axe */
 	UFUNCTION(Exec)
 	void SetMelee(int32 WeaponNumber);
 
