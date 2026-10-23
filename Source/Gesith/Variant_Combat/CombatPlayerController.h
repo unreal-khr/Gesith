@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "SquadTypes.h"
 #include "CombatPlayerController.generated.h"
 
 class UInputMappingContext;
@@ -57,6 +58,27 @@ protected:
 	/** Mapping context holding the castle menu input */
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> CastleMappingContext;
+	/** Key that orders the squad to follow */
+	UPROPERTY(EditAnywhere, Category="Input|Squad")
+	FKey SquadFollowKey = EKeys::One;
+
+	/** Key that orders the squad to hold where you stand */
+	UPROPERTY(EditAnywhere, Category="Input|Squad")
+	FKey SquadHoldKey = EKeys::Two;
+
+	/** Key that orders the squad to charge */
+	UPROPERTY(EditAnywhere, Category="Input|Squad")
+	FKey SquadChargeKey = EKeys::Three;
+
+	/** Squad order inputs, created at runtime like the castle menu input */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SquadFollowAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SquadHoldAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SquadChargeAction;
 
 	/** Castle menu while it's open */
 	UPROPERTY(Transient)
@@ -90,11 +112,23 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerCastlePromote(AGesithCastle* Castle, int32 SoldierId);
 
+	/** Asks the server to give an order to the soldiers following this player's character */
+	UFUNCTION(Server, Reliable)
+	void ServerSquadOrder(ESquadOrder Order);
+
 	/** Console command: opens or closes the castle menu, same as the castle menu key */
 	UFUNCTION(Exec)
 	void CastleMenu();
 
 protected:
+
+	/** Squad order inputs */
+	void OrderSquadFollow();
+	void OrderSquadHold();
+	void OrderSquadCharge();
+
+	/** Shows the order on screen and sends it to the server */
+	void GiveSquadOrder(ESquadOrder Order);
 
 	/** Opens the castle menu if the pawn is inside a castle, or closes it */
 	void ToggleCastleMenu();

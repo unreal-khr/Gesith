@@ -18,6 +18,7 @@
 #include "GesithCastle.h"
 #include "CastleMenuWidget.h"
 #include "Engine/Engine.h"
+#include "CombatSoldierAIController.h"
 
 void ACombatPlayerController::BeginPlay()
 {
@@ -75,10 +76,20 @@ void ACombatPlayerController::SetupInputComponent()
 				CastleMenuAction->ValueType = EInputActionValueType::Boolean;
 			}
 
+			if (!SquadFollowAction)
+			{
+				SquadFollowAction = NewObject<UInputAction>(this);
+				SquadHoldAction = NewObject<UInputAction>(this);
+				SquadChargeAction = NewObject<UInputAction>(this);
+			}
+
 			if (!CastleMappingContext)
 			{
 				CastleMappingContext = NewObject<UInputMappingContext>(this);
 				CastleMappingContext->MapKey(CastleMenuAction, CastleMenuKey);
+				CastleMappingContext->MapKey(SquadFollowAction, SquadFollowKey);
+				CastleMappingContext->MapKey(SquadHoldAction, SquadHoldKey);
+				CastleMappingContext->MapKey(SquadChargeAction, SquadChargeKey);
 			}
 
 			Subsystem->AddMappingContext(CastleMappingContext, 1);
@@ -89,11 +100,51 @@ void ACombatPlayerController::SetupInputComponent()
 		if (EnhancedInputComponent && CastleMenuAction)
 		{
 			EnhancedInputComponent->BindAction(CastleMenuAction, ETriggerEvent::Started, this, &ACombatPlayerController::ToggleCastleMenu);
+			EnhancedInputComponent->BindAction(SquadFollowAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadFollow);
+			EnhancedInputComponent->BindAction(SquadHoldAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadHold);
+			EnhancedInputComponent->BindAction(SquadChargeAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadCharge);
 		}
 		else
 		{
 			UE_LOG(LogGesith, Warning, TEXT("Castle menu input could not be bound (no enhanced input component)."));
 		}
+	}
+}
+
+void ACombatPlayerController::OrderSquadFollow()
+{
+	GiveSquadOrder(ESquadOrder::Follow);
+}
+
+void ACombatPlayerController::OrderSquadHold()
+{
+	GiveSquadOrder(ESquadOrder::Hold);
+}
+
+void ACombatPlayerController::OrderSquadCharge()
+{
+	GiveSquadOrder(ESquadOrder::Charge);
+}
+
+void ACombatPlayerController::GiveSquadOrder(ESquadOrder Order)
+{
+#if !UE_BUILD_SHIPPING
+	if (GEngine)
+	{
+		static const TCHAR* OrderNames[] = { TEXT("Charge!"), TEXT("Follow me"), TEXT("Hold here") };
+
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, FString::Printf(TEXT("Squad: %s"), OrderNames[static_cast<uint8>(Order)]));
+	}
+#endif
+
+	ServerSquadOrder(Order);
+}
+
+void ACombatPlayerController::ServerSquadOrder_Implementation(ESquadOrder Order)
+{
+	if (ACombatCharacter* Leader = Cast<ACombatCharacter>(GetPawn()))
+	{
+		ACombatSoldierAIController::OrderSquad(Leader, Order);
 	}
 }
 
