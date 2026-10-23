@@ -128,7 +128,7 @@ public:
 
 	/** Asks the server to name a player a knight of this player's castle, or dismiss them */
 	UFUNCTION(Server, Reliable)
-	void ServerCastleSetKnight(AGesithCastle* Castle, APlayerState* Player, bool bKnight);
+	void ServerCastleSetKnight(AGesithCastle* Castle, APlayerState* TargetPlayer, bool bKnight);
 
 	/** Asks the server to change when knights may manage this player's castle */
 	UFUNCTION(Server, Reliable)

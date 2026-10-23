@@ -311,11 +311,11 @@ void ACombatPlayerController::ServerCastleClaim_Implementation(AGesithCastle* Ca
 	}
 }
 
-void ACombatPlayerController::ServerCastleSetKnight_Implementation(AGesithCastle* Castle, APlayerState* Player, bool bKnight)
+void ACombatPlayerController::ServerCastleSetKnight_Implementation(AGesithCastle* Castle, APlayerState* TargetPlayer, bool bKnight)
 {
 	if (IsLordInCastle(Castle))
 	{
-		Castle->SetKnight(Player, bKnight);
+		Castle->SetKnight(TargetPlayer, bKnight);
 	}
 }
 

@@ -129,7 +129,7 @@ void UCastlePlayerRow::NativeOnInitialized()
 void UCastlePlayerRow::Setup(UCastleMenuWidget* InMenu, APlayerState* InPlayer, bool bIsKnight)
 {
 	Menu = InMenu;
-	Player = InPlayer;
+	RowPlayer = InPlayer;
 	bKnight = bIsKnight;
 
 	NameText->SetText(bKnight
@@ -141,9 +141,9 @@ void UCastlePlayerRow::Setup(UCastleMenuWidget* InMenu, APlayerState* InPlayer, 
 
 void UCastlePlayerRow::HandleKnightClicked()
 {
-	if (Menu.IsValid() && Player.IsValid())
+	if (Menu.IsValid() && RowPlayer.IsValid())
 	{
-		Menu->RequestSetKnight(Player.Get(), !bKnight);
+		Menu->RequestSetKnight(RowPlayer.Get(), !bKnight);
 	}
 }
 
@@ -516,11 +516,11 @@ void UCastleMenuWidget::RequestKnightPermission(EKnightPermission Permission)
 	}
 }
 
-void UCastleMenuWidget::RequestSetKnight(APlayerState* Player, bool bKnight)
+void UCastleMenuWidget::RequestSetKnight(APlayerState* TargetPlayer, bool bKnight)
 {
 	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
 	{
-		PC->ServerCastleSetKnight(Castle.Get(), Player, bKnight);
+		PC->ServerCastleSetKnight(Castle.Get(), TargetPlayer, bKnight);
 	}
 }
 

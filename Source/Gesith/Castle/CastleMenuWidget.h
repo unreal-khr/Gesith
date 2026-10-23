@@ -80,7 +80,7 @@ class UCastlePlayerRow : public UUserWidget
 	TWeakObjectPtr<UCastleMenuWidget> Menu;
 
 	/** Player shown in this row */
-	TWeakObjectPtr<APlayerState> Player;
+	TWeakObjectPtr<APlayerState> RowPlayer;
 
 	/** True if the player is currently a knight */
 	bool bKnight = false;
@@ -175,7 +175,7 @@ public:
 	void RequestPromote(int32 SoldierId);
 
 	/** Asks the server to name a player a knight, or dismiss them */
-	void RequestSetKnight(APlayerState* Player, bool bKnight);
+	void RequestSetKnight(APlayerState* TargetPlayer, bool bKnight);
 
 	/** Creates a text block with the menu's font size */
 	static UTextBlock* MakeText(UUserWidget* Owner, const FText& Text, int32 FontSize = 14);
