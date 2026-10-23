@@ -126,9 +126,21 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerCastleClaim(AGesithCastle* Castle);
 
-	/** Asks the server to name a player a knight of this player's castle, or dismiss them */
+	/** Asks the castle's lord to take this player on as a knight */
 	UFUNCTION(Server, Reliable)
-	void ServerCastleSetKnight(AGesithCastle* Castle, APlayerState* TargetPlayer, bool bKnight);
+	void ServerCastleRequestKnight(AGesithCastle* Castle);
+
+	/** The lord accepts or turns away a player's knight request */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleAnswerKnightRequest(AGesithCastle* Castle, APlayerState* TargetPlayer, bool bAccept);
+
+	/** The lord dismisses one of their knights */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleDismissKnight(AGesithCastle* Castle, APlayerState* TargetPlayer);
+
+	/** This player stops serving the castle's lord */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleLeaveKnighthood(AGesithCastle* Castle);
 
 	/** Asks the server to change when knights may manage this player's castle */
 	UFUNCTION(Server, Reliable)

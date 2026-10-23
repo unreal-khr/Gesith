@@ -291,8 +291,9 @@ bool AGesithCastle::Claim(APlayerState* Player)
 		return false;
 	}
 
-	// a knight who takes an empty castle stops being a knight of it
+	// a player who takes an empty castle can't also be waiting to serve it
 	Knights.Remove(Player);
+	KnightRequests.Remove(Player);
 	Lord = Player;
 
 	SyncLordship();
@@ -301,23 +302,54 @@ bool AGesithCastle::Claim(APlayerState* Player)
 	return true;
 }
 
-void AGesithCastle::SetKnight(APlayerState* Player, bool bKnight)
+bool AGesithCastle::HasRequestedKnighthood(const APlayerState* Player) const
 {
-	if (!HasAuthority() || !Player || Player == Lord)
+	return Player && KnightRequests.ContainsByPredicate([Player](const TObjectPtr<APlayerState>& Request) { return Request.Get() == Player; });
+}
+
+void AGesithCastle::RequestKnighthood(APlayerState* Player)
+{
+	// only a castle with a lord takes knights, and the lord can't serve themselves
+	if (!HasAuthority() || !Player || !Lord || Player == Lord || IsKnight(Player) || HasRequestedKnighthood(Player))
 	{
 		return;
 	}
 
-	if (bKnight)
+	KnightRequests.Add(Player);
+
+	NotifyChanged();
+}
+
+void AGesithCastle::AnswerKnightRequest(APlayerState* Player, bool bAccept)
+{
+	if (!HasAuthority() || !Player || KnightRequests.Remove(Player) == 0)
 	{
-		Knights.AddUnique(Player);
+		return;
 	}
-	else
+
+	if (bAccept)
 	{
-		Knights.Remove(Player);
+		// a knight serves one lord at a time
+		for (TActorIterator<AGesithCastle> It(GetWorld()); It; ++It)
+		{
+			if (*It != this)
+			{
+				It->RemoveKnight(Player);
+			}
+		}
+
+		Knights.AddUnique(Player);
 	}
 
 	NotifyChanged();
+}
+
+void AGesithCastle::RemoveKnight(APlayerState* Player)
+{
+	if (HasAuthority() && Player && Knights.Remove(Player) > 0)
+	{
+		NotifyChanged();
+	}
 }
 
 void AGesithCastle::SetKnightPermission(EKnightPermission NewPermission)
@@ -344,11 +376,13 @@ void AGesithCastle::SyncLordship()
 	}
 
 	bChanged |= Knights.RemoveAll([](const TObjectPtr<APlayerState>& Knight) { return !IsValid(Knight); }) > 0;
+	bChanged |= KnightRequests.RemoveAll([](const TObjectPtr<APlayerState>& Request) { return !IsValid(Request); }) > 0;
 
 	// a castle without a lord has no knights either
-	if (!Lord && Knights.Num() > 0)
+	if (!Lord && (Knights.Num() > 0 || KnightRequests.Num() > 0))
 	{
 		Knights.Reset();
+		KnightRequests.Reset();
 		bChanged = true;
 	}
 
@@ -781,6 +815,7 @@ void AGesithCastle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AGesithCastle, Roster);
 	DOREPLIFETIME(AGesithCastle, Lord);
 	DOREPLIFETIME(AGesithCastle, Knights);
+	DOREPLIFETIME(AGesithCastle, KnightRequests);
 	DOREPLIFETIME(AGesithCastle, KnightPermission);
 	DOREPLIFETIME(AGesithCastle, bLordInCastle);
 }

@@ -311,11 +311,35 @@ void ACombatPlayerController::ServerCastleClaim_Implementation(AGesithCastle* Ca
 	}
 }
 
-void ACombatPlayerController::ServerCastleSetKnight_Implementation(AGesithCastle* Castle, APlayerState* TargetPlayer, bool bKnight)
+void ACombatPlayerController::ServerCastleRequestKnight_Implementation(AGesithCastle* Castle)
+{
+	if (IsInCastle(Castle))
+	{
+		Castle->RequestKnighthood(PlayerState);
+	}
+}
+
+void ACombatPlayerController::ServerCastleAnswerKnightRequest_Implementation(AGesithCastle* Castle, APlayerState* TargetPlayer, bool bAccept)
 {
 	if (IsLordInCastle(Castle))
 	{
-		Castle->SetKnight(TargetPlayer, bKnight);
+		Castle->AnswerKnightRequest(TargetPlayer, bAccept);
+	}
+}
+
+void ACombatPlayerController::ServerCastleDismissKnight_Implementation(AGesithCastle* Castle, APlayerState* TargetPlayer)
+{
+	if (IsLordInCastle(Castle))
+	{
+		Castle->RemoveKnight(TargetPlayer);
+	}
+}
+
+void ACombatPlayerController::ServerCastleLeaveKnighthood_Implementation(AGesithCastle* Castle)
+{
+	if (IsInCastle(Castle))
+	{
+		Castle->RemoveKnight(PlayerState);
 	}
 }
 

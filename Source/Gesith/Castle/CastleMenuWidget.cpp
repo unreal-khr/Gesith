@@ -14,7 +14,6 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
-#include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 
 #define LOCTEXT_NAMESPACE "CastleMenu"
@@ -117,13 +116,18 @@ void UCastlePlayerRow::NativeOnInitialized()
 		NameSlot->SetVerticalAlignment(VAlign_Center);
 	}
 
-	UTextBlock* KnightLabel = nullptr;
+	UTextBlock* AcceptLabel = nullptr;
+	UTextBlock* DeclineLabel = nullptr;
 
-	UButton* KnightButton = UCastleMenuWidget::MakeButton(this, FText::GetEmpty(), KnightLabel);
-	KnightButtonText = KnightLabel;
-	KnightButton->OnClicked.AddDynamic(this, &UCastlePlayerRow::HandleKnightClicked);
+	AcceptButton = UCastleMenuWidget::MakeButton(this, LOCTEXT("AcceptKnight", "수락"), AcceptLabel);
+	DeclineButton = UCastleMenuWidget::MakeButton(this, FText::GetEmpty(), DeclineLabel);
+	DeclineButtonText = DeclineLabel;
 
-	RowBox->AddChildToHorizontalBox(KnightButton)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+	AcceptButton->OnClicked.AddDynamic(this, &UCastlePlayerRow::HandleAcceptClicked);
+	DeclineButton->OnClicked.AddDynamic(this, &UCastlePlayerRow::HandleDeclineClicked);
+
+	RowBox->AddChildToHorizontalBox(AcceptButton)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+	RowBox->AddChildToHorizontalBox(DeclineButton)->SetPadding(FMargin(4.0f, 0.0f, 0.0f, 0.0f));
 }
 
 void UCastlePlayerRow::Setup(UCastleMenuWidget* InMenu, APlayerState* InPlayer, bool bIsKnight)
@@ -134,16 +138,35 @@ void UCastlePlayerRow::Setup(UCastleMenuWidget* InMenu, APlayerState* InPlayer, 
 
 	NameText->SetText(bKnight
 		? FText::Format(LOCTEXT("KnightName", "{0}  [기사]"), FText::FromString(InPlayer->GetPlayerName()))
-		: FText::FromString(InPlayer->GetPlayerName()));
+		: FText::Format(LOCTEXT("RequestName", "{0}  [기사 요청]"), FText::FromString(InPlayer->GetPlayerName())));
 
-	KnightButtonText->SetText(bKnight ? LOCTEXT("RevokeKnight", "기사 해임") : LOCTEXT("GrantKnight", "기사 임명"));
+	// knights can only be dismissed, requests can be accepted or turned away
+	AcceptButton->SetVisibility(bKnight ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	DeclineButtonText->SetText(bKnight ? LOCTEXT("DismissKnight", "해임") : LOCTEXT("DeclineKnight", "거절"));
 }
 
-void UCastlePlayerRow::HandleKnightClicked()
+void UCastlePlayerRow::HandleAcceptClicked()
 {
 	if (Menu.IsValid() && RowPlayer.IsValid())
 	{
-		Menu->RequestSetKnight(RowPlayer.Get(), !bKnight);
+		Menu->RequestAnswerKnight(RowPlayer.Get(), true);
+	}
+}
+
+void UCastlePlayerRow::HandleDeclineClicked()
+{
+	if (!Menu.IsValid() || !RowPlayer.IsValid())
+	{
+		return;
+	}
+
+	if (bKnight)
+	{
+		Menu->RequestDismissKnight(RowPlayer.Get());
+	}
+	else
+	{
+		Menu->RequestAnswerKnight(RowPlayer.Get(), false);
 	}
 }
 
@@ -216,6 +239,19 @@ void UCastleMenuWidget::NativeOnInitialized()
 		ClaimSlot->SetHorizontalAlignment(HAlign_Left);
 	}
 
+	// other players ask to serve here, and knights can leave
+	UTextBlock* MembershipLabel = nullptr;
+
+	MembershipButton = MakeButton(this, FText::GetEmpty(), MembershipLabel);
+	MembershipButtonText = MembershipLabel;
+	MembershipButton->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandleMembershipClicked);
+
+	if (UVerticalBoxSlot* MembershipSlot = Content->AddChildToVerticalBox(MembershipButton))
+	{
+		MembershipSlot->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+		MembershipSlot->SetHorizontalAlignment(HAlign_Left);
+	}
+
 	// the lord picks when knights may manage the castle, and who the knights are
 	LordPanel = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 	Content->AddChildToVerticalBox(LordPanel)->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
@@ -244,7 +280,7 @@ void UCastleMenuWidget::NativeOnInitialized()
 	PermissionButtons[1]->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandlePermissionLordAwayClicked);
 	PermissionButtons[2]->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandlePermissionNeverClicked);
 
-	LordPanel->AddChildToVerticalBox(MakeText(this, LOCTEXT("KnightHeader", "기사 임명"), 13))->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+	LordPanel->AddChildToVerticalBox(MakeText(this, LOCTEXT("KnightHeader", "기사와 기사 요청"), 13))->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
 
 	KnightBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 	LordPanel->AddChildToVerticalBox(KnightBox);
@@ -366,6 +402,16 @@ void UCastleMenuWidget::Refresh()
 	AccessText->SetColorAndOpacity(FSlateColor(bCanManage ? FLinearColor(0.5f, 1.0f, 0.5f) : FLinearColor(1.0f, 0.8f, 0.4f)));
 
 	ClaimButton->SetVisibility(Castle->Lord ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+
+	// players under someone else's lordship can ask to serve, and knights can leave
+	const bool bIsKnight = Castle->IsKnight(Me);
+	const bool bRequested = Castle->HasRequestedKnighthood(Me);
+
+	MembershipButton->SetVisibility(Castle->Lord && !bIsLord ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	MembershipButton->SetIsEnabled(!bRequested);
+	MembershipButtonText->SetText(bIsKnight
+		? LOCTEXT("LeaveKnight", "기사 그만두기")
+		: bRequested ? LOCTEXT("RequestPending", "기사 요청 보냄 (영주의 답을 기다리는 중)") : LOCTEXT("RequestKnight", "이 성의 기사가 되기를 요청"));
 	LordPanel->SetVisibility(bIsLord ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 
 	// the current permission is shown as the one button that can't be pressed
@@ -439,49 +485,37 @@ void UCastleMenuWidget::HandleMusterClicked()
 	}
 }
 
-void UCastleMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
-{
-	Super::NativeTick(MyGeometry, InDeltaTime);
-
-	const AGameStateBase* GameState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
-
-	if (GameState && GameState->PlayerArray.Num() != LastPlayerCount)
-	{
-		RefreshKnights();
-	}
-}
-
 void UCastleMenuWidget::RefreshKnights()
 {
-	const AGameStateBase* GameState = GetWorld() ? GetWorld()->GetGameState() : nullptr;
-
-	if (!Castle.IsValid() || !GameState)
+	if (!Castle.IsValid())
 	{
 		return;
 	}
 
-	LastPlayerCount = GameState->PlayerArray.Num();
-
 	KnightBox->ClearChildren();
 
-	// every other player can be named a knight
-	for (APlayerState* Player : GameState->PlayerArray)
+	// requests first, since they wait on the lord
+	for (APlayerState* Request : Castle->KnightRequests)
 	{
-		if (!Player || Player == Castle->Lord)
+		if (UCastlePlayerRow* Row = Request ? CreateWidget<UCastlePlayerRow>(this, UCastlePlayerRow::StaticClass()) : nullptr)
 		{
-			continue;
+			Row->Setup(this, Request, false);
+			KnightBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 2.0f));
 		}
+	}
 
-		if (UCastlePlayerRow* Row = CreateWidget<UCastlePlayerRow>(this, UCastlePlayerRow::StaticClass()))
+	for (APlayerState* Knight : Castle->Knights)
+	{
+		if (UCastlePlayerRow* Row = Knight ? CreateWidget<UCastlePlayerRow>(this, UCastlePlayerRow::StaticClass()) : nullptr)
 		{
-			Row->Setup(this, Player, Castle->IsKnight(Player));
+			Row->Setup(this, Knight, true);
 			KnightBox->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 2.0f));
 		}
 	}
 
 	if (KnightBox->GetChildrenCount() == 0)
 	{
-		KnightBox->AddChildToVerticalBox(MakeText(this, LOCTEXT("NoPlayers", "접속한 다른 플레이어가 없어요."), 12));
+		KnightBox->AddChildToVerticalBox(MakeText(this, LOCTEXT("NoKnights", "아직 기사나 기사 요청이 없어요."), 12));
 	}
 }
 
@@ -516,11 +550,38 @@ void UCastleMenuWidget::RequestKnightPermission(EKnightPermission Permission)
 	}
 }
 
-void UCastleMenuWidget::RequestSetKnight(APlayerState* TargetPlayer, bool bKnight)
+void UCastleMenuWidget::RequestAnswerKnight(APlayerState* TargetPlayer, bool bAccept)
 {
 	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
 	{
-		PC->ServerCastleSetKnight(Castle.Get(), TargetPlayer, bKnight);
+		PC->ServerCastleAnswerKnightRequest(Castle.Get(), TargetPlayer, bAccept);
+	}
+}
+
+void UCastleMenuWidget::RequestDismissKnight(APlayerState* TargetPlayer)
+{
+	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
+	{
+		PC->ServerCastleDismissKnight(Castle.Get(), TargetPlayer);
+	}
+}
+
+void UCastleMenuWidget::HandleMembershipClicked()
+{
+	ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>();
+
+	if (!PC || !Castle.IsValid())
+	{
+		return;
+	}
+
+	if (Castle->IsKnight(GetOwningPlayerState()))
+	{
+		PC->ServerCastleLeaveKnighthood(Castle.Get());
+	}
+	else
+	{
+		PC->ServerCastleRequestKnight(Castle.Get());
 	}
 }
 
