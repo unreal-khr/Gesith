@@ -221,8 +221,9 @@ protected:
 	FVector DefaultCameraSocketOffset = FVector::ZeroVector;
 	float DefaultFieldOfView = 90.0f;
 
-	/** Rotation setting saved on BeginPlay. Drawing a bow turns the character with the camera instead */
+	/** Rotation settings saved on BeginPlay. Holding a bow turns the character with the camera instead */
 	bool bDefaultOrientRotationToMovement = true;
+	bool bDefaultUseControllerRotationYaw = false;
 
 	/** True while this character's squad fights with bows. Set by the leader's F4 key */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Squad")

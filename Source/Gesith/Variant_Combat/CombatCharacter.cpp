@@ -576,7 +576,8 @@ void ACombatCharacter::UpdateFacing()
 	// an archer faces where the camera looks the whole time the bow is out, not only while drawing
 	const bool bFaceCamera = bIsDrawing || GetCurrentWeaponStats().bRanged;
 
-	bUseControllerRotationYaw = bFaceCamera;
+	// otherwise go back to however the Blueprint turns the character
+	bUseControllerRotationYaw = bFaceCamera || bDefaultUseControllerRotationYaw;
 	GetCharacterMovement()->bOrientRotationToMovement = bFaceCamera ? false : bDefaultOrientRotationToMovement;
 }
 
@@ -1680,6 +1681,7 @@ void ACombatCharacter::BeginPlay()
 	DefaultCameraSocketOffset = GetCameraBoom()->SocketOffset;
 	DefaultFieldOfView = GetFollowCamera()->FieldOfView;
 	bDefaultOrientRotationToMovement = GetCharacterMovement()->bOrientRotationToMovement;
+	bDefaultUseControllerRotationYaw = bUseControllerRotationYaw;
 
 	// slot 1 holds the melee weapon, then show the weapon in hand
 	UpdateMeleeSlot();
