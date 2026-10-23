@@ -5,6 +5,20 @@
 #include "CoreMinimal.h"
 #include "GesithSoldierTypes.generated.h"
 
+/** When the lord's knights may manage the castle. The lord always can */
+UENUM(BlueprintType)
+enum class EKnightPermission : uint8
+{
+	/** Knights can manage the castle at any time, even with the lord inside */
+	Always,
+
+	/** Knights stand in only while the lord is away from the castle */
+	LordAway,
+
+	/** Only the lord manages the castle */
+	Never
+};
+
 /** Soldier ranks, from recruit to elite */
 UENUM(BlueprintType)
 enum class ESoldierRank : uint8

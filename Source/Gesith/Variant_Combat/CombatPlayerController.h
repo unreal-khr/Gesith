@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "SquadTypes.h"
+#include "GesithSoldierTypes.h"
 #include "CombatPlayerController.generated.h"
 
 class UInputMappingContext;
@@ -12,6 +13,7 @@ class UInputAction;
 class ACombatCharacter;
 class AGesithCastle;
 class UCastleMenuWidget;
+class APlayerState;
 
 /**
  *  Simple Player Controller for a third person combat game
@@ -120,6 +122,30 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerCastleDismiss(AGesithCastle* Castle);
 
+	/** Asks the server to make this player lord of a castle without one */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleClaim(AGesithCastle* Castle);
+
+	/** Asks the castle's lord to take this player on as a knight */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleRequestKnight(AGesithCastle* Castle);
+
+	/** The lord accepts or turns away a player's knight request */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleAnswerKnightRequest(AGesithCastle* Castle, APlayerState* TargetPlayer, bool bAccept);
+
+	/** The lord dismisses one of their knights */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleDismissKnight(AGesithCastle* Castle, APlayerState* TargetPlayer);
+
+	/** This player stops serving the castle's lord */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleLeaveKnighthood(AGesithCastle* Castle);
+
+	/** Asks the server to change when knights may manage this player's castle */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleSetKnightPermission(AGesithCastle* Castle, EKnightPermission Permission);
+
 	/** Asks the server to give an order to the soldiers following this player's character */
 	UFUNCTION(Server, Reliable)
 	void ServerSquadOrder(ESquadOrder Order);
@@ -150,8 +176,14 @@ protected:
 	/** Returns the castle the pawn is standing in, or nullptr */
 	AGesithCastle* FindCastleAtPawn() const;
 
-	/** Returns true if the castle exists and the pawn is inside it. Used to check requests on the server */
+	/** Returns true if the castle exists and the pawn is inside it */
+	bool IsInCastle(const AGesithCastle* Castle) const;
+
+	/** Returns true if the pawn is inside the castle and this player may manage it. Used to check requests on the server */
 	bool CanManageCastle(const AGesithCastle* Castle) const;
+
+	/** Returns true if the pawn is inside the castle and this player is its lord */
+	bool IsLordInCastle(const AGesithCastle* Castle) const;
 
 protected:
 

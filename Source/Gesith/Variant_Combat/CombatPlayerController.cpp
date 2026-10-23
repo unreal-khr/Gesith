@@ -19,6 +19,7 @@
 #include "CastleMenuWidget.h"
 #include "Engine/Engine.h"
 #include "CombatSoldierAIController.h"
+#include "GameFramework/PlayerState.h"
 
 void ACombatPlayerController::BeginPlay()
 {
@@ -242,9 +243,19 @@ AGesithCastle* ACombatPlayerController::FindCastleAtPawn() const
 	return nullptr;
 }
 
-bool ACombatPlayerController::CanManageCastle(const AGesithCastle* Castle) const
+bool ACombatPlayerController::IsInCastle(const AGesithCastle* Castle) const
 {
 	return Castle && GetPawn() && Castle->IsInsideCastle(GetPawn()->GetActorLocation());
+}
+
+bool ACombatPlayerController::CanManageCastle(const AGesithCastle* Castle) const
+{
+	return IsInCastle(Castle) && Castle->CanManage(PlayerState);
+}
+
+bool ACombatPlayerController::IsLordInCastle(const AGesithCastle* Castle) const
+{
+	return IsInCastle(Castle) && PlayerState && Castle->Lord == PlayerState;
 }
 
 void ACombatPlayerController::ServerCastleRecruit_Implementation(AGesithCastle* Castle)
@@ -285,9 +296,58 @@ void ACombatPlayerController::ServerCastleDismiss_Implementation(AGesithCastle* 
 {
 	ACombatCharacter* Leader = Cast<ACombatCharacter>(GetPawn());
 
-	if (Leader && CanManageCastle(Castle))
+	// anyone leading the castle's soldiers can send them home, even after losing the right to manage
+	if (Leader && IsInCastle(Castle))
 	{
 		Leader->DismissToCastle(Castle);
+	}
+}
+
+void ACombatPlayerController::ServerCastleClaim_Implementation(AGesithCastle* Castle)
+{
+	if (IsInCastle(Castle))
+	{
+		Castle->Claim(PlayerState);
+	}
+}
+
+void ACombatPlayerController::ServerCastleRequestKnight_Implementation(AGesithCastle* Castle)
+{
+	if (IsInCastle(Castle))
+	{
+		Castle->RequestKnighthood(PlayerState);
+	}
+}
+
+void ACombatPlayerController::ServerCastleAnswerKnightRequest_Implementation(AGesithCastle* Castle, APlayerState* TargetPlayer, bool bAccept)
+{
+	if (IsLordInCastle(Castle))
+	{
+		Castle->AnswerKnightRequest(TargetPlayer, bAccept);
+	}
+}
+
+void ACombatPlayerController::ServerCastleDismissKnight_Implementation(AGesithCastle* Castle, APlayerState* TargetPlayer)
+{
+	if (IsLordInCastle(Castle))
+	{
+		Castle->RemoveKnight(TargetPlayer);
+	}
+}
+
+void ACombatPlayerController::ServerCastleLeaveKnighthood_Implementation(AGesithCastle* Castle)
+{
+	if (IsInCastle(Castle))
+	{
+		Castle->RemoveKnight(PlayerState);
+	}
+}
+
+void ACombatPlayerController::ServerCastleSetKnightPermission_Implementation(AGesithCastle* Castle, EKnightPermission Permission)
+{
+	if (IsLordInCastle(Castle))
+	{
+		Castle->SetKnightPermission(Permission);
 	}
 }
 

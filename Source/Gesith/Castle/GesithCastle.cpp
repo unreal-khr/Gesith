@@ -11,6 +11,7 @@
 #include "CombatCharacter.h"
 #include "CombatSoldierAIController.h"
 #include "EngineUtils.h"
+#include "GameFramework/PlayerState.h"
 
 AGesithCastle::AGesithCastle()
 {
@@ -131,6 +132,7 @@ void AGesithCastle::Tick(float DeltaSeconds)
 		PawnSyncTimer = 1.0f;
 
 		SyncSoldierPawns();
+		SyncLordship();
 	}
 
 	DayTimer += DeltaSeconds;
@@ -250,6 +252,153 @@ int32 AGesithCastle::GetDailyWages() const
 	}
 
 	return Total;
+}
+
+bool AGesithCastle::CanManage(const APlayerState* Player) const
+{
+	if (!Player || !Lord)
+	{
+		return false;
+	}
+
+	if (Player == Lord.Get())
+	{
+		return true;
+	}
+
+	if (!IsKnight(Player))
+	{
+		return false;
+	}
+
+	switch (KnightPermission)
+	{
+	case EKnightPermission::Always: return true;
+	case EKnightPermission::LordAway: return !bLordInCastle;
+	default: return false;
+	}
+}
+
+bool AGesithCastle::IsKnight(const APlayerState* Player) const
+{
+	return Player && Knights.ContainsByPredicate([Player](const TObjectPtr<APlayerState>& Knight) { return Knight.Get() == Player; });
+}
+
+bool AGesithCastle::Claim(APlayerState* Player)
+{
+	if (!HasAuthority() || !Player || Lord)
+	{
+		return false;
+	}
+
+	// a player who takes an empty castle can't also be waiting to serve it
+	Knights.Remove(Player);
+	KnightRequests.Remove(Player);
+	Lord = Player;
+
+	SyncLordship();
+	NotifyChanged();
+
+	return true;
+}
+
+bool AGesithCastle::HasRequestedKnighthood(const APlayerState* Player) const
+{
+	return Player && KnightRequests.ContainsByPredicate([Player](const TObjectPtr<APlayerState>& Request) { return Request.Get() == Player; });
+}
+
+void AGesithCastle::RequestKnighthood(APlayerState* Player)
+{
+	// only a castle with a lord takes knights, and the lord can't serve themselves
+	if (!HasAuthority() || !Player || !Lord || Player == Lord || IsKnight(Player) || HasRequestedKnighthood(Player))
+	{
+		return;
+	}
+
+	KnightRequests.Add(Player);
+
+	NotifyChanged();
+}
+
+void AGesithCastle::AnswerKnightRequest(APlayerState* Player, bool bAccept)
+{
+	if (!HasAuthority() || !Player || KnightRequests.Remove(Player) == 0)
+	{
+		return;
+	}
+
+	if (bAccept)
+	{
+		// a knight serves one lord at a time
+		for (TActorIterator<AGesithCastle> It(GetWorld()); It; ++It)
+		{
+			if (*It != this)
+			{
+				It->RemoveKnight(Player);
+			}
+		}
+
+		Knights.AddUnique(Player);
+	}
+
+	NotifyChanged();
+}
+
+void AGesithCastle::RemoveKnight(APlayerState* Player)
+{
+	if (HasAuthority() && Player && Knights.Remove(Player) > 0)
+	{
+		NotifyChanged();
+	}
+}
+
+void AGesithCastle::SetKnightPermission(EKnightPermission NewPermission)
+{
+	if (!HasAuthority() || KnightPermission == NewPermission)
+	{
+		return;
+	}
+
+	KnightPermission = NewPermission;
+
+	NotifyChanged();
+}
+
+void AGesithCastle::SyncLordship()
+{
+	bool bChanged = false;
+
+	// players who left the game lose their place
+	if (Lord && !IsValid(Lord))
+	{
+		Lord = nullptr;
+		bChanged = true;
+	}
+
+	bChanged |= Knights.RemoveAll([](const TObjectPtr<APlayerState>& Knight) { return !IsValid(Knight); }) > 0;
+	bChanged |= KnightRequests.RemoveAll([](const TObjectPtr<APlayerState>& Request) { return !IsValid(Request); }) > 0;
+
+	// a castle without a lord has no knights either
+	if (!Lord && (Knights.Num() > 0 || KnightRequests.Num() > 0))
+	{
+		Knights.Reset();
+		KnightRequests.Reset();
+		bChanged = true;
+	}
+
+	const APawn* LordPawn = Lord ? Lord->GetPawn() : nullptr;
+	const bool bLordHome = LordPawn && IsInsideCastle(LordPawn->GetActorLocation());
+
+	if (bLordHome != bLordInCastle)
+	{
+		bLordInCastle = bLordHome;
+		bChanged = true;
+	}
+
+	if (bChanged)
+	{
+		NotifyChanged();
+	}
 }
 
 bool AGesithCastle::HasSoldiersInField() const
@@ -664,4 +813,9 @@ void AGesithCastle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AGesithCastle, UnpaidGoldDays);
 	DOREPLIFETIME(AGesithCastle, UnpaidFoodDays);
 	DOREPLIFETIME(AGesithCastle, Roster);
+	DOREPLIFETIME(AGesithCastle, Lord);
+	DOREPLIFETIME(AGesithCastle, Knights);
+	DOREPLIFETIME(AGesithCastle, KnightRequests);
+	DOREPLIFETIME(AGesithCastle, KnightPermission);
+	DOREPLIFETIME(AGesithCastle, bLordInCastle);
 }
