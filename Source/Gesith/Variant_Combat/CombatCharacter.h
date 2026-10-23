@@ -533,8 +533,8 @@ protected:
 	/** Shoots the drawn bow at a point, or cancels if it wasn't drawn far enough. Server only */
 	void ReleaseDraw(const FVector& AimPoint);
 
-	/** Makes the character turn with the camera while drawing, and back afterwards */
-	void SetFaceCamera(bool bFaceCamera);
+	/** Makes the character turn with the camera while a bow is out, and walk the usual way otherwise */
+	void UpdateFacing();
 
 	/** Zooms the camera in for aiming. Owning player only */
 	void SetAimZoom(bool bZoom);

@@ -456,6 +456,8 @@ void ACombatCharacter::UpdateWeaponLook()
 	ShieldMesh->SetRelativeTransform(ShieldTransform);
 	ShieldMesh->SetVisibility(HasShieldInHand());
 
+	UpdateFacing();
+
 	// look over the shoulder with a bow, so the crosshair isn't on the character's back
 	if (IsLocallyControlled() && IsPlayerControlled())
 	{
@@ -479,7 +481,7 @@ void ACombatCharacter::StartDraw()
 	bIsDrawing = true;
 	DrawStartTime = GetWorld()->GetTimeSeconds();
 
-	SetFaceCamera(true);
+	UpdateFacing();
 }
 
 void ACombatCharacter::CancelDraw()
@@ -488,7 +490,7 @@ void ACombatCharacter::CancelDraw()
 	{
 		bIsDrawing = false;
 
-		SetFaceCamera(false);
+		UpdateFacing();
 	}
 }
 
@@ -563,13 +565,16 @@ void ACombatCharacter::ReleaseDraw(const FVector& AimPoint)
 	--Arrows;
 }
 
-void ACombatCharacter::SetFaceCamera(bool bFaceCamera)
+void ACombatCharacter::UpdateFacing()
 {
-	// AI soldiers turn themselves toward their target
-	if (!IsPlayerControlled())
+	// AI soldiers turn themselves toward their target, and the walking setting isn't saved before BeginPlay
+	if (!IsPlayerControlled() || !HasActorBegunPlay())
 	{
 		return;
 	}
+
+	// an archer faces where the camera looks the whole time the bow is out, not only while drawing
+	const bool bFaceCamera = bIsDrawing || GetCurrentWeaponStats().bRanged;
 
 	bUseControllerRotationYaw = bFaceCamera;
 	GetCharacterMovement()->bOrientRotationToMovement = bFaceCamera ? false : bDefaultOrientRotationToMovement;
