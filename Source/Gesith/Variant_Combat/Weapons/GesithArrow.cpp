@@ -88,10 +88,10 @@ void AGesithArrow::OnArrowHit(UPrimitiveComponent* HitComponent, AActor* OtherAc
 void AGesithArrow::OnArrowOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	const ACombatCharacter* Shooter = Cast<ACombatCharacter>(GetInstigator());
-	const ACombatCharacter* Character = Cast<ACombatCharacter>(OtherActor);
+	const ACombatCharacter* HitCharacter = Cast<ACombatCharacter>(OtherActor);
 
 	// fly on past the archer, allies and fallen soldiers
-	if (OtherActor == Shooter || (Character && (Character->IsDead() || (Shooter && Shooter->IsAllyOf(Character)))))
+	if (OtherActor == Shooter || (HitCharacter && (HitCharacter->IsDead() || (Shooter && Shooter->IsAllyOf(HitCharacter)))))
 	{
 		return;
 	}

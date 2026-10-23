@@ -221,9 +221,9 @@ void ACombatPlayerController::SelectWeapon(int32 Slot)
 		return;
 	}
 
-	if (ACombatCharacter* Character = Cast<ACombatCharacter>(GetPawn()))
+	if (ACombatCharacter* CombatCharacter = Cast<ACombatCharacter>(GetPawn()))
 	{
-		Character->SelectWeaponSlot(Slot);
+		CombatCharacter->SelectWeaponSlot(Slot);
 	}
 }
 

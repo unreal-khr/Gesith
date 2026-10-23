@@ -65,10 +65,10 @@ void UWeaponHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	ACombatCharacter* Character = Cast<ACombatCharacter>(GetOwningPlayerPawn());
+	ACombatCharacter* OwnerCharacter = Cast<ACombatCharacter>(GetOwningPlayerPawn());
 
 	// nothing to show while dead or between respawns
-	if (!Character || Character->IsDead())
+	if (!OwnerCharacter || OwnerCharacter->IsDead())
 	{
 		SetRenderOpacity(0.0f);
 		return;
@@ -76,12 +76,12 @@ void UWeaponHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime
 
 	SetRenderOpacity(1.0f);
 
-	const int32 Current = Character->GetCurrentWeaponSlot();
+	const int32 Current = OwnerCharacter->GetCurrentWeaponSlot();
 
 	for (int32 Index = 0; Index < SlotTexts.Num(); ++Index)
 	{
-		const EGesithWeaponType Type = Character->GetWeaponInSlot(Index);
-		const FText Name = Type == EGesithWeaponType::None ? LOCTEXT("EmptySlot", "-") : Character->GetWeaponStats(Type).DisplayName;
+		const EGesithWeaponType Type = OwnerCharacter->GetWeaponInSlot(Index);
+		const FText Name = Type == EGesithWeaponType::None ? LOCTEXT("EmptySlot", "-") : OwnerCharacter->GetWeaponStats(Type).DisplayName;
 		const bool bInHand = Index == Current;
 
 		// the weapon in hand is bracketed and bright
@@ -89,14 +89,14 @@ void UWeaponHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime
 		SlotTexts[Index]->SetColorAndOpacity(FSlateColor(bInHand ? FLinearColor(1.0f, 0.85f, 0.3f) : FLinearColor(0.7f, 0.7f, 0.7f)));
 	}
 
-	ArrowText->SetText(FText::Format(LOCTEXT("Arrows", "화살 {0}/{1}"), FText::AsNumber(Character->GetArrows()), FText::AsNumber(Character->GetMaxArrows())));
+	ArrowText->SetText(FText::Format(LOCTEXT("Arrows", "화살 {0}/{1}"), FText::AsNumber(OwnerCharacter->GetArrows()), FText::AsNumber(OwnerCharacter->GetMaxArrows())));
 
-	StanceText->SetText(Character->IsSquadRanged() ? LOCTEXT("StanceRanged", "부대: 원거리 (F4)") : LOCTEXT("StanceMelee", "부대: 근접 (F4)"));
+	StanceText->SetText(OwnerCharacter->IsSquadRanged() ? LOCTEXT("StanceRanged", "부대: 원거리 (F4)") : LOCTEXT("StanceMelee", "부대: 근접 (F4)"));
 
 	// the crosshair turns red at full draw
-	const bool bBow = Character->GetCurrentWeaponStats().bRanged;
+	const bool bBow = OwnerCharacter->GetCurrentWeaponStats().bRanged;
 	CrosshairText->SetVisibility(bBow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
-	CrosshairText->SetColorAndOpacity(FSlateColor(Character->GetDrawFraction() >= 1.0f ? FLinearColor(1.0f, 0.3f, 0.2f) : FLinearColor::White));
+	CrosshairText->SetColorAndOpacity(FSlateColor(OwnerCharacter->GetDrawFraction() >= 1.0f ? FLinearColor(1.0f, 0.3f, 0.2f) : FLinearColor::White));
 }
 
 #undef LOCTEXT_NAMESPACE
