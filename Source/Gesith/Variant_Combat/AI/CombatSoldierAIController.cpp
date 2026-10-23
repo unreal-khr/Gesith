@@ -70,7 +70,15 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 
 	if (Order == ESquadOrder::Follow)
 	{
-		SlotForward = Leader->GetActorForwardVector().GetSafeNormal2D();
+		// turn the formation only while the leader walks, so looking around doesn't send soldiers running
+		const FVector LeaderVelocity = Leader->GetVelocity();
+
+		if (LeaderVelocity.SizeSquared2D() > FMath::Square(FollowTurnMinSpeed))
+		{
+			FollowForward = FMath::VInterpNormalRotationTo(FollowForward, LeaderVelocity.GetSafeNormal2D(), DeltaTime, FollowTurnRate);
+		}
+
+		SlotForward = FollowForward;
 		Slot = GetFormationSlot(Leader->GetActorLocation() - SlotForward * FollowDistance, SlotForward);
 		EngageCenter = Leader->GetActorLocation();
 		EngageRange = FollowEngageRange;
@@ -177,6 +185,7 @@ void ACombatSoldierAIController::SetSquadOrder(ESquadOrder NewOrder, int32 NewIn
 	SquadCount = FMath::Max(NewCount, 1);
 	HoldOrigin = Origin;
 	HoldForward = Forward.GetSafeNormal2D();
+	FollowForward = HoldForward;
 
 	// pick a target that fits the new order right away
 	Target = nullptr;

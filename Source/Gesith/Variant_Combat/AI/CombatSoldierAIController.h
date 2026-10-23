@@ -66,6 +66,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Squad", meta = (ClampMin = 0, ClampMax = 2000, Units = "cm"))
 	float FollowDistance = 300.0f;
 
+	/** The follow formation only turns while the leader moves faster than this, so turning on the spot doesn't move the squad */
+	UPROPERTY(EditAnywhere, Category="Squad", meta = (ClampMin = 0, ClampMax = 1000, Units = "cm/s"))
+	float FollowTurnMinSpeed = 150.0f;
+
+	/** How fast the follow formation turns toward the leader's walking direction */
+	UPROPERTY(EditAnywhere, Category="Squad", meta = (ClampMin = 0, ClampMax = 1000, Units = "deg/s"))
+	float FollowTurnRate = 120.0f;
+
 	/** Soldiers closer than this to their slot stop walking */
 	UPROPERTY(EditAnywhere, Category="Squad", meta = (ClampMin = 0, ClampMax = 500, Units = "cm"))
 	float SlotTolerance = 60.0f;
@@ -84,6 +92,9 @@ protected:
 
 	/** Front center of the formation while holding */
 	FVector HoldOrigin = FVector::ZeroVector;
+
+	/** Direction the formation faces while following. Follows the leader's walking direction, not where they look */
+	FVector FollowForward = FVector::ForwardVector;
 
 	/** Direction the formation faces while holding */
 	FVector HoldForward = FVector::ForwardVector;
