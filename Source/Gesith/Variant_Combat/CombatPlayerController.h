@@ -112,6 +112,10 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerCastlePromote(AGesithCastle* Castle, int32 SoldierId);
 
+	/** Asks the server to march the castle's available soldiers out behind this player's character */
+	UFUNCTION(Server, Reliable)
+	void ServerCastleMuster(AGesithCastle* Castle);
+
 	/** Asks the server to give an order to the soldiers following this player's character */
 	UFUNCTION(Server, Reliable)
 	void ServerSquadOrder(ESquadOrder Order);

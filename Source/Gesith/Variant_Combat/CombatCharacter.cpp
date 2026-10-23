@@ -19,6 +19,7 @@
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "CombatSoldierAIController.h"
+#include "GesithCastle.h"
 
 ACombatCharacter::ACombatCharacter()
 {
@@ -319,6 +320,62 @@ void ACombatCharacter::ServerSpawnSquad_Implementation(int32 SquadSize)
 #if !UE_BUILD_SHIPPING
 	SquadSize = FMath::Clamp(SquadSize, 1, 50);
 
+	SpawnSquadMembers(SquadSize);
+
+	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
+
+	ShowCombatDebugMessage(FString::Printf(TEXT("Squad of %d is following you. 1 Follow, 2 Hold, 3 Charge"), Count), FColor::Green);
+#endif
+}
+
+void ACombatCharacter::MusterFromCastle(AGesithCastle* Castle)
+{
+	if (!HasAuthority() || !Castle)
+	{
+		return;
+	}
+
+	const TArray<FSoldierRecord> Records = Castle->MusterSoldiers();
+	const TArray<ACombatCharacter*> Soldiers = SpawnSquadMembers(Records.Num());
+
+	// soldiers that failed to spawn stay home
+	for (int32 Index = 0; Index < Records.Num(); ++Index)
+	{
+		ACombatSoldierAIController* SoldierAI = Soldiers.IsValidIndex(Index) ? Cast<ACombatSoldierAIController>(Soldiers[Index]->GetController()) : nullptr;
+
+		if (SoldierAI)
+		{
+			SoldierAI->SetRosterSoldier(Castle, Records[Index]);
+		}
+		else
+		{
+			Castle->SoldierReturned(Records[Index].Id, false);
+		}
+	}
+
+	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
+
+	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers marched out. Walk them back into the castle to bring them home"), Count), FColor::Green);
+}
+
+void ACombatCharacter::ApplySoldierStats(float Health, float Strength)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// a fresh recruit (10) fights like the base character, the stat cap (100) is much tougher
+	MaxHP *= 0.5f + Health / 20.0f;
+	MeleeDamage *= 0.5f + Strength / 20.0f;
+
+	ResetHP();
+}
+
+TArray<ACombatCharacter*> ACombatCharacter::SpawnSquadMembers(int32 SquadSize)
+{
+	TArray<ACombatCharacter*> Soldiers;
+
 	// a squad needs a side to fight for
 	if (TeamId == 0)
 	{
@@ -333,19 +390,21 @@ void ACombatCharacter::ServerSpawnSquad_Implementation(int32 SquadSize)
 	{
 		const FVector Location = GetActorLocation() - Forward * (300.0f + (Index / 5) * BattleLineSpacing) + Right * ((Index % 5 - 2) * BattleLineSpacing);
 
-		if (ACombatCharacter* Soldier = SpawnSoldier(Location, Forward.Rotation(), TeamId))
+		ACombatCharacter* Soldier = SpawnSoldier(Location, Forward.Rotation(), TeamId);
+		ACombatSoldierAIController* SoldierAI = Soldier ? Cast<ACombatSoldierAIController>(Soldier->GetController()) : nullptr;
+
+		if (SoldierAI)
 		{
-			if (ACombatSoldierAIController* SoldierAI = Cast<ACombatSoldierAIController>(Soldier->GetController()))
-			{
-				SoldierAI->JoinSquad(this);
-			}
+			SoldierAI->JoinSquad(this);
+			Soldiers.Add(Soldier);
+		}
+		else if (Soldier)
+		{
+			Soldier->Destroy();
 		}
 	}
 
-	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
-
-	ShowCombatDebugMessage(FString::Printf(TEXT("Squad of %d is following you. 1 Follow, 2 Hold, 3 Charge"), Count), FColor::Green);
-#endif
+	return Soldiers;
 }
 
 void ACombatCharacter::SpawnEnemies(int32 EnemyCount)
@@ -1086,6 +1145,7 @@ void ACombatCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ACombatCharacter, CurrentHP);
+	DOREPLIFETIME(ACombatCharacter, MaxHP);
 
 	DOREPLIFETIME(ACombatCharacter, bIsBlocking);
 	DOREPLIFETIME(ACombatCharacter, TeamId);

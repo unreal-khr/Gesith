@@ -146,6 +146,18 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Castle|Training", meta = (ClampMin = 1))
 	float StatCap = 100.0f;
 
+	/** Chance that a soldier who falls in battle is killed instead of wounded */
+	UPROPERTY(EditAnywhere, Category="Castle|Battle", meta = (ClampMin = 0, ClampMax = 1))
+	float DeathChance = 0.3f;
+
+	/** Days a wounded soldier needs to recover */
+	UPROPERTY(EditAnywhere, Category="Castle|Battle", meta = (ClampMin = 0))
+	int32 WoundRecoveryDays = 3;
+
+	/** Stat points gained in strength and weapon skill for coming back from a fight, before slowing down near the cap */
+	UPROPERTY(EditAnywhere, Category="Castle|Battle", meta = (ClampMin = 0))
+	float BattleGain = 1.0f;
+
 	/** Average stat needed to promote into each rank after recruit */
 	UPROPERTY(EditAnywhere, Category="Castle|Training")
 	TArray<float> PromotionThresholds;
@@ -196,6 +208,18 @@ public:
 
 	/** Returns the gold it costs to recruit a soldier */
 	int32 GetRecruitCost() const { return RecruitCost; }
+
+	/** Returns how many soldiers are in the castle and healthy */
+	int32 GetAvailableCount() const;
+
+	/** Sends every available soldier out with a lord and returns them. Server only */
+	TArray<FSoldierRecord> MusterSoldiers();
+
+	/** A soldier walked back into the castle. Soldiers who fought get a little stronger. Server only */
+	void SoldierReturned(int32 SoldierId, bool bFought);
+
+	/** A soldier fell in battle and is either killed or wounded. Returns true if killed. Server only */
+	bool SoldierFell(int32 SoldierId);
 
 	/** Returns the localized name of a rank */
 	static FText GetRankName(ESoldierRank Rank);

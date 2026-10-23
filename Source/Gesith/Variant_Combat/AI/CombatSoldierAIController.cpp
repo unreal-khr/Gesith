@@ -5,6 +5,8 @@
 #include "CombatCharacter.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
+#include "GesithCastle.h"
 
 ACombatSoldierAIController::ACombatSoldierAIController()
 {
@@ -24,7 +26,68 @@ void ACombatSoldierAIController::OnPossess(APawn* InPawn)
 
 void ACombatSoldierAIController::OnPawnDestroyed(AActor* DestroyedActor)
 {
+	// soldiers removed without falling, like with ClearBattle, go back to the castle unharmed
+	ReportToCastle(false);
+
 	Destroy();
+}
+
+void ACombatSoldierAIController::SetRosterSoldier(AGesithCastle* Castle, const FSoldierRecord& Record)
+{
+	HomeCastle = Castle;
+	RosterId = Record.Id;
+
+	if (ACombatCharacter* Soldier = Cast<ACombatCharacter>(GetPawn()))
+	{
+		Soldier->ApplySoldierStats(Record.Health, Record.Strength);
+	}
+
+	// faster soldiers swing more often, up to twice as often at the stat cap
+	const float SpeedFactor = FMath::Clamp(1.0f - (Record.AttackSpeed - 10.0f) / 180.0f, 0.5f, 1.0f);
+	MinAttackInterval *= SpeedFactor;
+	MaxAttackInterval *= SpeedFactor;
+
+	// skilled soldiers read attacks better
+	GuardChance = FMath::Clamp(0.3f + Record.WeaponSkill * 0.005f, 0.0f, 0.8f);
+}
+
+void ACombatSoldierAIController::ReportToCastle(bool bFell)
+{
+	AGesithCastle* Castle = HomeCastle.Get();
+
+	if (bReported || !Castle)
+	{
+		return;
+	}
+
+	bReported = true;
+
+	const FSoldierRecord* Record = Castle->Roster.FindByPredicate([this](const FSoldierRecord& Soldier) { return Soldier.Id == RosterId; });
+	const FString Name = Record ? Record->Name : TEXT("A soldier");
+
+	FString Message;
+
+	if (bFell)
+	{
+		Message = Castle->SoldierFell(RosterId)
+			? FString::Printf(TEXT("%s was killed"), *Name)
+			: FString::Printf(TEXT("%s was wounded and carried home"), *Name);
+	}
+	else
+	{
+		Castle->SoldierReturned(RosterId, bFought);
+
+		Message = bFought
+			? FString::Printf(TEXT("%s came home and learned from the fight"), *Name)
+			: FString::Printf(TEXT("%s came home"), *Name);
+	}
+
+#if !UE_BUILD_SHIPPING
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, bFell ? FColor::Orange : FColor::Green, Message);
+	}
+#endif
 }
 
 void ACombatSoldierAIController::Tick(float DeltaTime)
@@ -33,9 +96,35 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 
 	ACombatCharacter* Soldier = Cast<ACombatCharacter>(GetPawn());
 
-	if (!Soldier || Soldier->IsDead())
+	if (!Soldier)
 	{
 		return;
+	}
+
+	if (Soldier->IsDead())
+	{
+		ReportToCastle(true);
+
+		return;
+	}
+
+	// roster soldiers who march out and walk back into their castle go home
+	if (AGesithCastle* Castle = HomeCastle.Get())
+	{
+		// the march starts when the leader leaves, so soldiers that spawned outside a wall don't count as gone
+		const ACombatCharacter* MarchLeader = SquadLeader.IsValid() ? SquadLeader.Get() : Soldier;
+
+		if (!Castle->IsInsideCastle(MarchLeader->GetActorLocation()))
+		{
+			bLeftCastle = true;
+		}
+		else if (bLeftCastle && Castle->IsInsideCastle(Soldier->GetActorLocation()))
+		{
+			ReportToCastle(false);
+			Soldier->Destroy();
+
+			return;
+		}
 	}
 
 	const float Now = GetWorld()->GetTimeSeconds();
@@ -101,6 +190,8 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 
 	if (Target.IsValid())
 	{
+		bFought = true;
+
 		FightTarget(Soldier, DeltaTime, Now);
 	}
 	else if (Order != ESquadOrder::Charge)

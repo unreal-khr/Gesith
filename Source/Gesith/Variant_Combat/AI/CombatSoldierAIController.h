@@ -8,6 +8,8 @@
 #include "CombatSoldierAIController.generated.h"
 
 class ACombatCharacter;
+class AGesithCastle;
+struct FSoldierRecord;
 
 /**
  *  A simple AI Controller that drives a CombatCharacter in team battles.
@@ -99,6 +101,21 @@ protected:
 	/** Direction the formation faces while holding */
 	FVector HoldForward = FVector::ForwardVector;
 
+	/** Castle whose roster this soldier comes from. Null for soldiers spawned for testing */
+	TWeakObjectPtr<AGesithCastle> HomeCastle;
+
+	/** Roster id of this soldier in the home castle */
+	int32 RosterId = 0;
+
+	/** True once the soldier has marched out of the home castle, so walking back in brings them home */
+	bool bLeftCastle = false;
+
+	/** True once the soldier has fought an enemy */
+	bool bFought = false;
+
+	/** True once the home castle has been told how this soldier's outing ended */
+	bool bReported = false;
+
 	/** Current enemy */
 	TWeakObjectPtr<ACombatCharacter> Target;
 
@@ -128,6 +145,9 @@ public:
 	/** Gives this soldier an order and its place in the formation. Server only */
 	void SetSquadOrder(ESquadOrder NewOrder, int32 NewIndex, int32 NewCount, const FVector& Origin, const FVector& Forward);
 
+	/** Links this soldier to a roster entry and applies the entry's stats. Server only */
+	void SetRosterSoldier(AGesithCastle* Castle, const FSoldierRecord& Record);
+
 	/** Returns the lord this soldier follows, or nullptr */
 	ACombatCharacter* GetSquadLeader() const { return SquadLeader.Get(); }
 
@@ -142,6 +162,9 @@ protected:
 	/** Called when the possessed pawn is destroyed */
 	UFUNCTION()
 	void OnPawnDestroyed(AActor* DestroyedActor);
+
+	/** Tells the home castle the soldier came back or fell, once */
+	void ReportToCastle(bool bFell);
 
 	/** Returns the closest living character on another team that is within MaxRange of Center */
 	ACombatCharacter* FindNearestEnemy(const ACombatCharacter* Soldier, const FVector& Center, float MaxRange) const;

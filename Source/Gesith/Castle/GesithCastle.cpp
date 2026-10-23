@@ -166,7 +166,10 @@ void AGesithCastle::SetTraining(int32 SoldierId, bool bTraining)
 		return;
 	}
 
-	if (FSoldierRecord* Soldier = FindSoldier(SoldierId))
+	FSoldierRecord* Soldier = FindSoldier(SoldierId);
+
+	// soldiers out in the field or recovering can't train
+	if (Soldier && (Soldier->IsAvailable() || !bTraining))
 	{
 		Soldier->bTraining = bTraining;
 
@@ -224,6 +227,96 @@ int32 AGesithCastle::GetDailyWages() const
 	return Total;
 }
 
+int32 AGesithCastle::GetAvailableCount() const
+{
+	int32 Count = 0;
+
+	for (const FSoldierRecord& Soldier : Roster)
+	{
+		Count += Soldier.IsAvailable() ? 1 : 0;
+	}
+
+	return Count;
+}
+
+TArray<FSoldierRecord> AGesithCastle::MusterSoldiers()
+{
+	TArray<FSoldierRecord> Mustered;
+
+	if (!HasAuthority())
+	{
+		return Mustered;
+	}
+
+	for (FSoldierRecord& Soldier : Roster)
+	{
+		if (Soldier.IsAvailable())
+		{
+			Soldier.bInField = true;
+			Soldier.bTraining = false;
+
+			Mustered.Add(Soldier);
+		}
+	}
+
+	if (Mustered.Num() > 0)
+	{
+		NotifyChanged();
+	}
+
+	return Mustered;
+}
+
+void AGesithCastle::SoldierReturned(int32 SoldierId, bool bFought)
+{
+	FSoldierRecord* Soldier = HasAuthority() ? FindSoldier(SoldierId) : nullptr;
+
+	if (!Soldier)
+	{
+		return;
+	}
+
+	Soldier->bInField = false;
+
+	// a real fight teaches more than the training ground
+	if (bFought)
+	{
+		for (float* Stat : { &Soldier->Strength, &Soldier->WeaponSkill })
+		{
+			*Stat = FMath::Min(*Stat + BattleGain * (1.0f - *Stat / StatCap), StatCap);
+		}
+	}
+
+	NotifyChanged();
+}
+
+bool AGesithCastle::SoldierFell(int32 SoldierId)
+{
+	FSoldierRecord* Soldier = HasAuthority() ? FindSoldier(SoldierId) : nullptr;
+
+	if (!Soldier)
+	{
+		return false;
+	}
+
+	const bool bKilled = FMath::FRand() < DeathChance;
+
+	if (bKilled)
+	{
+		Roster.RemoveAll([SoldierId](const FSoldierRecord& Other) { return Other.Id == SoldierId; });
+	}
+	else
+	{
+		// the wounded are carried home to recover
+		Soldier->bInField = false;
+		Soldier->WoundedDays = WoundRecoveryDays;
+	}
+
+	NotifyChanged();
+
+	return bKilled;
+}
+
 FText AGesithCastle::GetRankName(ESoldierRank Rank)
 {
 	switch (Rank)
@@ -270,6 +363,12 @@ void AGesithCastle::AdvanceDay()
 		++UnpaidFoodDays;
 	}
 
+	// the wounded heal a little every day
+	for (FSoldierRecord& Soldier : Roster)
+	{
+		Soldier.WoundedDays = FMath::Max(Soldier.WoundedDays - 1, 0);
+	}
+
 	// one soldier leaves for each day past the limit
 	if (UnpaidGoldDays >= GoldDaysBeforeDesertion || UnpaidFoodDays >= FoodDaysBeforeDesertion)
 	{
@@ -291,7 +390,7 @@ void AGesithCastle::RunTrainingSession()
 
 	for (FSoldierRecord& Soldier : Roster)
 	{
-		if (!Soldier.bTraining)
+		if (!Soldier.bTraining || !Soldier.IsAvailable())
 		{
 			continue;
 		}

@@ -15,6 +15,7 @@ class UInputAction;
 struct FInputActionValue;
 class UCombatLifeBar;
 class UWidgetComponent;
+class AGesithCastle;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
 
@@ -68,8 +69,8 @@ protected:
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* GuardAction;
 
-	/** Max amount of HP the character will have on respawn */
-	UPROPERTY(EditAnywhere, Category="Damage", meta = (ClampMin = 0, ClampMax = 100))
+	/** Max amount of HP the character will have on respawn. Replicated because soldier stats change it */
+	UPROPERTY(EditAnywhere, ReplicatedUsing=OnRep_CurrentHP, Category="Damage", meta = (ClampMin = 0, ClampMax = 100))
 	float MaxHP = 5.0f;
 
 	/** Current amount of HP the character has. Only the server changes it */
@@ -308,6 +309,12 @@ public:
 	UFUNCTION(Exec)
 	void SpawnSquad(int32 SquadSize = 5);
 
+	/** Spawns the castle's available soldiers as a squad following this character. Server only */
+	void MusterFromCastle(AGesithCastle* Castle);
+
+	/** Scales HP and damage from a soldier's health and strength. 10 is a fresh recruit. Server only */
+	void ApplySoldierStats(float Health, float Strength);
+
 	/** Console command: spawns an enemy line far in front of you that charges */
 	UFUNCTION(Exec)
 	void SpawnEnemies(int32 EnemyCount = 5);
@@ -389,6 +396,9 @@ protected:
 	/** Asks the server to spawn enemies in front of this character */
 	UFUNCTION(Server, Reliable)
 	void ServerSpawnEnemies(int32 EnemyCount);
+
+	/** Spawns soldiers behind this character that join its squad. Server only */
+	TArray<ACombatCharacter*> SpawnSquadMembers(int32 SquadSize);
 
 	/** Spawns one AI soldier on a team. Server only */
 	ACombatCharacter* SpawnSoldier(const FVector& Location, const FRotator& Facing, int32 Team);
