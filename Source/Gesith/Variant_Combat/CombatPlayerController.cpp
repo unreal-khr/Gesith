@@ -94,7 +94,7 @@ void ACombatPlayerController::SetupInputComponent()
 				SquadFollowAction = NewObject<UInputAction>(this);
 				SquadHoldAction = NewObject<UInputAction>(this);
 				SquadChargeAction = NewObject<UInputAction>(this);
-				SquadRangedAction = NewObject<UInputAction>(this);
+				SquadSidearmAction = NewObject<UInputAction>(this);
 			}
 
 			if (WeaponSlotActions.IsEmpty())
@@ -112,7 +112,7 @@ void ACombatPlayerController::SetupInputComponent()
 				CastleMappingContext->MapKey(SquadFollowAction, SquadFollowKey);
 				CastleMappingContext->MapKey(SquadHoldAction, SquadHoldKey);
 				CastleMappingContext->MapKey(SquadChargeAction, SquadChargeKey);
-				CastleMappingContext->MapKey(SquadRangedAction, SquadRangedKey);
+				CastleMappingContext->MapKey(SquadSidearmAction, SquadSidearmKey);
 
 				for (int32 Index = 0; Index < WeaponSlotActions.Num(); ++Index)
 				{
@@ -131,7 +131,7 @@ void ACombatPlayerController::SetupInputComponent()
 			EnhancedInputComponent->BindAction(SquadFollowAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadFollow);
 			EnhancedInputComponent->BindAction(SquadHoldAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadHold);
 			EnhancedInputComponent->BindAction(SquadChargeAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadCharge);
-			EnhancedInputComponent->BindAction(SquadRangedAction, ETriggerEvent::Started, this, &ACombatPlayerController::ToggleSquadRanged);
+			EnhancedInputComponent->BindAction(SquadSidearmAction, ETriggerEvent::Started, this, &ACombatPlayerController::ToggleSquadSidearms);
 
 			// one handler per slot key, up to four
 			using FSlotHandler = void (ACombatPlayerController::*)();
@@ -164,7 +164,7 @@ void ACombatPlayerController::OrderSquadCharge()
 	GiveSquadOrder(ESquadOrder::Charge);
 }
 
-void ACombatPlayerController::ToggleSquadRanged()
+void ACombatPlayerController::ToggleSquadSidearms()
 {
 	const ACombatCharacter* Leader = Cast<ACombatCharacter>(GetPawn());
 
@@ -173,23 +173,23 @@ void ACombatPlayerController::ToggleSquadRanged()
 		return;
 	}
 
-	const bool bRanged = !Leader->IsSquadRanged();
+	const bool bSidearms = !Leader->IsSquadSidearms();
 
 #if !UE_BUILD_SHIPPING
 	if (GEngine)
 	{
-		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, bRanged ? TEXT("Squad: Bows out") : TEXT("Squad: Melee weapons"));
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, bSidearms ? TEXT("Archers: Sidearms") : TEXT("Archers: Bows, sidearms up close"));
 	}
 #endif
 
-	ServerSquadRanged(bRanged);
+	ServerSquadSidearms(bSidearms);
 }
 
-void ACombatPlayerController::ServerSquadRanged_Implementation(bool bRanged)
+void ACombatPlayerController::ServerSquadSidearms_Implementation(bool bSidearms)
 {
 	if (ACombatCharacter* Leader = Cast<ACombatCharacter>(GetPawn()))
 	{
-		Leader->SetSquadRanged(bRanged);
+		Leader->SetSquadSidearms(bSidearms);
 	}
 }
 

@@ -33,7 +33,10 @@ enum class EGesithWeaponType : uint8
 	GreatSpear,
 
 	/** Two handed axe. No shield, the heaviest hits */
-	GreatAxe
+	GreatAxe,
+
+	/** An archer's weak sidearm for when enemies get close. No shield */
+	Dagger
 };
 
 /** How a weapon fights and looks. Every number is a starting point for balancing */

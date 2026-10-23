@@ -83,12 +83,12 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> SquadChargeAction;
 
-	/** Key that switches the squad between melee and ranged */
+	/** Key that switches archers between bows and sidearms */
 	UPROPERTY(EditAnywhere, Category="Input|Squad")
-	FKey SquadRangedKey = EKeys::F4;
+	FKey SquadSidearmKey = EKeys::F4;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UInputAction> SquadRangedAction;
+	TObjectPtr<UInputAction> SquadSidearmAction;
 
 	/** Keys that take out the weapon in slots 1 to 4 */
 	UPROPERTY(EditAnywhere, Category="Input|Weapons")
@@ -170,9 +170,9 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerSquadOrder(ESquadOrder Order);
 
-	/** Asks the server to switch the squad between melee and ranged */
+	/** Asks the server to switch this player's archers between bows and sidearms */
 	UFUNCTION(Server, Reliable)
-	void ServerSquadRanged(bool bRanged);
+	void ServerSquadSidearms(bool bSidearms);
 
 	/** Console command: opens or closes the castle menu, same as the castle menu key */
 	UFUNCTION(Exec)
@@ -185,7 +185,7 @@ protected:
 	void OrderSquadHold();
 	void OrderSquadCharge();
 
-	void ToggleSquadRanged();
+	void ToggleSquadSidearms();
 
 	/** Weapon slot inputs */
 	void SelectWeapon1();

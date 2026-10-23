@@ -50,7 +50,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Soldier|Ranged", meta = (ClampMin = 0, ClampMax = 10000, Units = "cm"))
 	float BowRange = 2500.0f;
 
-	/** Enemies closer than this make an archer put the bow away and draw a melee weapon */
+	/** Enemies closer than this make an archer put the bow away and draw their sidearm */
 	UPROPERTY(EditAnywhere, Category="Soldier|Ranged", meta = (ClampMin = 0, ClampMax = 2000, Units = "cm"))
 	float BowMinRange = 400.0f;
 
@@ -235,8 +235,8 @@ protected:
 	/** Takes out a ranged or melee weapon if one is carried. Returns true once the right kind is in hand */
 	bool UseWeapon(ACombatCharacter* Soldier, bool bRanged) const;
 
-	/** Returns true if the soldier's squad leader has ordered bows out */
-	bool IsRangedOrder() const;
+	/** Returns true if the soldier's squad leader has ordered archers to fight with their sidearms */
+	bool IsSidearmOrder() const;
 
 	/** Returns where this soldier stands in a formation whose front center is Origin */
 	FVector GetFormationSlot(const FVector& Origin, const FVector& Forward) const;

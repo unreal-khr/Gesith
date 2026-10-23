@@ -89,9 +89,11 @@ void UWeaponHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime
 		SlotTexts[Index]->SetColorAndOpacity(FSlateColor(bInHand ? FLinearColor(1.0f, 0.85f, 0.3f) : FLinearColor(0.7f, 0.7f, 0.7f)));
 	}
 
+	// only archers carry arrows
+	ArrowText->SetVisibility(OwnerCharacter->IsArcher() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	ArrowText->SetText(FText::Format(LOCTEXT("Arrows", "화살 {0}/{1}"), FText::AsNumber(OwnerCharacter->GetArrows()), FText::AsNumber(OwnerCharacter->GetMaxArrows())));
 
-	StanceText->SetText(OwnerCharacter->IsSquadRanged() ? LOCTEXT("StanceRanged", "부대: 원거리 (F4)") : LOCTEXT("StanceMelee", "부대: 근접 (F4)"));
+	StanceText->SetText(OwnerCharacter->IsSquadSidearms() ? LOCTEXT("StanceSidearms", "궁수: 보조 무기 (F4)") : LOCTEXT("StanceBows", "궁수: 활 (F4)"));
 
 	// the crosshair turns red at full draw
 	const bool bBow = OwnerCharacter->GetCurrentWeaponStats().bRanged;

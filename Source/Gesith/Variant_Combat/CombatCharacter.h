@@ -160,13 +160,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Guard")
 	FTransform ShieldTransform;
 
-	/** Weapon in each of the 1-4 slots. Slot 1 always holds MeleeWeapon */
+	/** Weapon in each of the 1-4 slots. Slot 1 holds MainWeapon, and archers carry their sidearm in slot 2 */
 	UPROPERTY(EditAnywhere, Category="Weapons")
 	TArray<EGesithWeaponType> WeaponSlots;
 
-	/** The one melee weapon this character carries. Replicated so everyone sees a soldier's spear or axe */
-	UPROPERTY(EditAnywhere, ReplicatedUsing=OnRep_MeleeWeapon, Category="Weapons")
-	EGesithWeaponType MeleeWeapon = EGesithWeaponType::Sword;
+	/** The weapon of this character's line: a melee weapon for infantry, or the bow for archers. Replicated so everyone sees it */
+	UPROPERTY(EditAnywhere, ReplicatedUsing=OnRep_MainWeapon, Category="Weapons")
+	EGesithWeaponType MainWeapon = EGesithWeaponType::Sword;
 
 	/** How each kind of weapon fights and looks */
 	UPROPERTY(EditAnywhere, Category="Weapons")
@@ -227,9 +227,9 @@ protected:
 	bool bDefaultOrientRotationToMovement = true;
 	bool bDefaultUseControllerRotationYaw = false;
 
-	/** True while this character's squad fights with bows. Set by the leader's F4 key */
+	/** True while this character's archers fight with their sidearms instead of bows. Set by the leader's F4 key */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Squad")
-	bool bSquadRanged = false;
+	bool bSquadSidearms = false;
 
 	/** Checks for arrow refills. Server only */
 	FTimerHandle ArrowRefillTimer;
@@ -400,9 +400,9 @@ public:
 	UFUNCTION(Exec)
 	void ClearBattle();
 
-	/** Console command: spawns soldiers on your team that follow your orders */
+	/** Console command: spawns soldiers on your team that follow your orders. WeaponNumber as in WeaponFromNumber, 7 for archers */
 	UFUNCTION(Exec)
-	void SpawnSquad(int32 SquadSize = 5);
+	void SpawnSquad(int32 SquadSize = 5, int32 WeaponNumber = 1);
 
 	/** Summons the castle's soldiers to follow this character. Server only */
 	void MusterFromCastle(AGesithCastle* Castle);
@@ -413,16 +413,19 @@ public:
 	/** Scales HP and damage from a soldier's stats, and hands them their melee weapon. 10 is a fresh recruit. Server only */
 	void ApplySoldierStats(const FSoldierRecord& Record);
 
-	/** Sets the one melee weapon this character carries in slot 1. Server only */
-	void SetMeleeWeapon(EGesithWeaponType Weapon);
+	/** Sets the weapon of this character's line. Archers also get a sidearm. Server only */
+	void SetMainWeapon(EGesithWeaponType Weapon);
 
-	/** Console command: changes your melee weapon for testing. 1 sword, 2 great sword, 3 spear, 4 great spear, 5 axe, 6 great axe */
-	UFUNCTION(Exec)
-	void SetMelee(int32 WeaponNumber);
+	/** Returns the weapon for a testing console number: 1 sword, 2 great sword, 3 spear, 4 great spear, 5 axe, 6 great axe, 7 bow */
+	static EGesithWeaponType WeaponFromNumber(int32 WeaponNumber);
 
-	/** Console command: spawns an enemy line far in front of you that charges */
+	/** Console command: changes your line's weapon for testing. Numbers as in WeaponFromNumber */
 	UFUNCTION(Exec)
-	void SpawnEnemies(int32 EnemyCount = 5);
+	void SetWeapon(int32 WeaponNumber);
+
+	/** Console command: spawns an enemy line far in front of you that charges. WeaponNumber as in WeaponFromNumber, 7 for archers */
+	UFUNCTION(Exec)
+	void SpawnEnemies(int32 EnemyCount = 5, int32 WeaponNumber = 1);
 
 	/** Console command for solo testing. Toggles guarding every attack from the front without holding the input */
 	UFUNCTION(Exec)
@@ -466,11 +469,14 @@ public:
 	/** Returns how far the bow is drawn, from 0 to 1. 0 while not drawing */
 	float GetDrawFraction() const;
 
-	/** Returns true if this character's squad should fight with bows */
-	bool IsSquadRanged() const { return bSquadRanged; }
+	/** Returns true if this character's archers should fight with their sidearms */
+	bool IsSquadSidearms() const { return bSquadSidearms; }
 
-	/** Switches this character's squad between melee and bows. Server only */
-	void SetSquadRanged(bool bRanged);
+	/** Switches this character's archers between bows and sidearms. Server only */
+	void SetSquadSidearms(bool bSidearms);
+
+	/** Returns true if this character's line is the bow */
+	bool IsArcher() const;
 
 	/** Lowers the bow without shooting */
 	void CancelDraw();
@@ -548,16 +554,16 @@ protected:
 	/** Refills arrows inside a castle that isn't an enemy's. Server only */
 	void CheckArrowRefill();
 
-	/** Puts the melee weapon in slot 1 and refreshes the look */
-	void UpdateMeleeSlot();
+	/** Fills the slots from the line's weapon and refreshes the look */
+	void UpdateWeaponSlots();
 
 	/** Called on clients when the melee weapon replicates */
 	UFUNCTION()
-	void OnRep_MeleeWeapon();
+	void OnRep_MainWeapon();
 
 	/** Sends the melee weapon change to the server */
 	UFUNCTION(Server, Reliable)
-	void ServerSetMelee(int32 WeaponNumber);
+	void ServerSetWeapon(int32 WeaponNumber);
 
 	/** Called on clients when the weapon in hand replicates */
 	UFUNCTION()
@@ -612,17 +618,17 @@ protected:
 
 	/** Asks the server to spawn a squad for this character */
 	UFUNCTION(Server, Reliable)
-	void ServerSpawnSquad(int32 SquadSize);
+	void ServerSpawnSquad(int32 SquadSize, int32 WeaponNumber);
 
 	/** Asks the server to spawn enemies in front of this character */
 	UFUNCTION(Server, Reliable)
-	void ServerSpawnEnemies(int32 EnemyCount);
+	void ServerSpawnEnemies(int32 EnemyCount, int32 WeaponNumber);
 
 	/** Spawns soldiers behind this character that join its squad. Server only */
-	TArray<ACombatCharacter*> SpawnSquadMembers(int32 SquadSize);
+	TArray<ACombatCharacter*> SpawnSquadMembers(int32 SquadSize, EGesithWeaponType Weapon = EGesithWeaponType::Sword);
 
 	/** Spawns one AI soldier on a team. Server only */
-	ACombatCharacter* SpawnSoldier(const FVector& Location, const FRotator& Facing, int32 Team);
+	ACombatCharacter* SpawnSoldier(const FVector& Location, const FRotator& Facing, int32 Team, EGesithWeaponType Weapon = EGesithWeaponType::Sword);
 
 	/** Prints how many soldiers are still alive on each team */
 	void ShowBattleStatus() const;

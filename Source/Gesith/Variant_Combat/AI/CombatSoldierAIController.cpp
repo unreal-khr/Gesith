@@ -157,8 +157,8 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 	FVector EngageCenter = Soldier->GetActorLocation();
 	float EngageRange = TNumericLimits<float>::Max();
 
-	// archers reach farther than swordsmen
-	const float RangedReach = IsRangedOrder() ? BowRange : 0.0f;
+	// archers with their bows out reach farther than infantry
+	const float RangedReach = Soldier->IsArcher() && !IsSidearmOrder() ? BowRange : 0.0f;
 
 	if (Order == ESquadOrder::Follow)
 	{
@@ -242,11 +242,11 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 	}
 }
 
-bool ACombatSoldierAIController::IsRangedOrder() const
+bool ACombatSoldierAIController::IsSidearmOrder() const
 {
 	const ACombatCharacter* Leader = SquadLeader.Get();
 
-	return Leader && Leader->IsSquadRanged();
+	return Leader && Leader->IsSquadSidearms();
 }
 
 bool ACombatSoldierAIController::UseWeapon(ACombatCharacter* Soldier, bool bRanged) const
@@ -275,8 +275,8 @@ void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float De
 	// face the target
 	SetControlRotation(LookRotation);
 
-	// archers shoot until the enemy gets close or the arrows run out
-	const bool bWantsBow = IsRangedOrder() && Soldier->GetArrows() > 0 && ToTarget.Size2D() > BowMinRange && Soldier->FindWeaponSlot(true) >= 0;
+	// archers shoot until the enemy gets close or the arrows run out, unless ordered to fight with their sidearms
+	const bool bWantsBow = Soldier->IsArcher() && !IsSidearmOrder() && Soldier->GetArrows() > 0 && ToTarget.Size2D() > BowMinRange;
 
 	if (bWantsBow)
 	{
@@ -288,7 +288,7 @@ void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float De
 		return;
 	}
 
-	// a drawn bow is lowered before switching to melee
+	// a drawn bow is lowered before switching to the sidearm
 	Soldier->CancelDraw();
 
 	UseWeapon(Soldier, false);

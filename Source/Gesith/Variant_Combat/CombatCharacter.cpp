@@ -90,8 +90,8 @@ ACombatCharacter::ACombatCharacter()
 	// a round shield, flat against the forearm
 	ShieldTransform = FTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector(0.6f, 0.6f, 0.04f));
 
-	// the 1-4 slots: one melee weapon and the bow. Every number is a starting point for balancing
-	WeaponSlots = { EGesithWeaponType::Sword, EGesithWeaponType::Bow, EGesithWeaponType::None, EGesithWeaponType::None };
+	// the 1-4 slots: the line's weapon, then an archer's sidearm. Every number is a starting point for balancing
+	WeaponSlots = { EGesithWeaponType::Sword, EGesithWeaponType::None, EGesithWeaponType::None, EGesithWeaponType::None };
 
 	// each melee line has a one handed version with a shield and a two handed version that trades the shield for damage and reach
 	FGesithWeaponStats Sword = MakeWeapon(LOCTEXT("Sword", "한손검"), CubeMesh.Object, FVector(0.01f, 0.06f, 0.9f), 45.0f);
@@ -130,6 +130,14 @@ ACombatCharacter::ACombatCharacter()
 	GreatAxe.AttackSpeed = 0.65f;
 	GreatAxe.Reach = 90.0f;
 	WeaponStats.Add(EGesithWeaponType::GreatAxe, GreatAxe);
+
+	// an archer's sidearm: quick and weak
+	FGesithWeaponStats Dagger = MakeWeapon(LOCTEXT("Dagger", "단검"), CubeMesh.Object, FVector(0.01f, 0.04f, 0.35f), 18.0f);
+	Dagger.DamageMultiplier = 0.6f;
+	Dagger.AttackSpeed = 1.2f;
+	Dagger.Reach = 60.0f;
+	Dagger.SwingRadius = 50.0f;
+	WeaponStats.Add(EGesithWeaponType::Dagger, Dagger);
 
 	// ranged, needs both hands. Held upright in the left hand
 	FGesithWeaponStats Bow = MakeWeapon(LOCTEXT("Bow", "활"), CylinderMesh.Object, FVector(0.03f, 0.03f, 1.3f), 0.0f);
@@ -430,7 +438,8 @@ bool ACombatCharacter::HasShieldInHand() const
 {
 	const FGesithWeaponStats& Stats = GetCurrentWeaponStats();
 
-	return bHasShield && !Stats.bTwoHanded && !Stats.bRanged;
+	// archers carry no shield, even with their one handed sidearm
+	return bHasShield && !Stats.bTwoHanded && !Stats.bRanged && !IsArcher();
 }
 
 float ACombatCharacter::GetDrawFraction() const
@@ -498,12 +507,17 @@ void ACombatCharacter::ServerReleaseDraw_Implementation(const FVector_NetQuantiz
 	ReleaseDraw(AimPoint);
 }
 
-void ACombatCharacter::SetSquadRanged(bool bRanged)
+void ACombatCharacter::SetSquadSidearms(bool bSidearms)
 {
 	if (HasAuthority())
 	{
-		bSquadRanged = bRanged;
+		bSquadSidearms = bSidearms;
 	}
+}
+
+bool ACombatCharacter::IsArcher() const
+{
+	return GetWeaponStats(MainWeapon).bRanged;
 }
 
 void ACombatCharacter::ReleaseBowAt(const FVector& AimPoint)
@@ -793,24 +807,24 @@ void ACombatCharacter::ServerClearBattle_Implementation()
 #endif
 }
 
-void ACombatCharacter::SpawnSquad(int32 SquadSize)
+void ACombatCharacter::SpawnSquad(int32 SquadSize, int32 WeaponNumber)
 {
 	if (HasAuthority())
 	{
-		ServerSpawnSquad_Implementation(SquadSize);
+		ServerSpawnSquad_Implementation(SquadSize, WeaponNumber);
 	}
 	else
 	{
-		ServerSpawnSquad(SquadSize);
+		ServerSpawnSquad(SquadSize, WeaponNumber);
 	}
 }
 
-void ACombatCharacter::ServerSpawnSquad_Implementation(int32 SquadSize)
+void ACombatCharacter::ServerSpawnSquad_Implementation(int32 SquadSize, int32 WeaponNumber)
 {
 #if !UE_BUILD_SHIPPING
 	SquadSize = FMath::Clamp(SquadSize, 1, 50);
 
-	SpawnSquadMembers(SquadSize);
+	SpawnSquadMembers(SquadSize, WeaponFromNumber(WeaponNumber));
 
 	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
 
@@ -890,66 +904,75 @@ void ACombatCharacter::ApplySoldierStats(const FSoldierRecord& Record)
 	MaxHP = Defaults->MaxHP * (0.5f + Record.Health / 20.0f);
 	MeleeDamage = Defaults->MeleeDamage * (0.5f + Record.Strength / 20.0f);
 
-	SetMeleeWeapon(Record.MeleeWeapon);
+	SetMainWeapon(Record.MainWeapon);
 
 	ResetHP();
 }
 
-void ACombatCharacter::SetMeleeWeapon(EGesithWeaponType Weapon)
+void ACombatCharacter::SetMainWeapon(EGesithWeaponType Weapon)
 {
-	// only melee weapons go in slot 1
-	if (!HasAuthority() || Weapon == EGesithWeaponType::None || GetWeaponStats(Weapon).bRanged)
+	// a line is one of the melee weapons or the bow, never the sidearm
+	if (!HasAuthority() || Weapon == EGesithWeaponType::None || Weapon == EGesithWeaponType::Dagger)
 	{
 		return;
 	}
 
-	MeleeWeapon = Weapon;
+	MainWeapon = Weapon;
 
-	UpdateMeleeSlot();
+	UpdateWeaponSlots();
 }
 
-void ACombatCharacter::UpdateMeleeSlot()
+void ACombatCharacter::UpdateWeaponSlots()
 {
-	if (WeaponSlots.IsValidIndex(0))
+	// infantry carry only their line's weapon, archers also carry a sidearm
+	WeaponSlots = { MainWeapon, IsArcher() ? EGesithWeaponType::Dagger : EGesithWeaponType::None, EGesithWeaponType::None, EGesithWeaponType::None };
+
+	// go back to the main weapon if the one in hand is no longer carried
+	if (GetWeaponInSlot(CurrentWeaponSlot) == EGesithWeaponType::None)
 	{
-		WeaponSlots[0] = MeleeWeapon;
+		CancelDraw();
+		CurrentWeaponSlot = 0;
 	}
 
 	UpdateWeaponLook();
 }
 
-void ACombatCharacter::OnRep_MeleeWeapon()
+void ACombatCharacter::OnRep_MainWeapon()
 {
-	UpdateMeleeSlot();
+	UpdateWeaponSlots();
 }
 
-void ACombatCharacter::SetMelee(int32 WeaponNumber)
+EGesithWeaponType ACombatCharacter::WeaponFromNumber(int32 WeaponNumber)
+{
+	static const EGesithWeaponType LineWeapons[] = { EGesithWeaponType::Sword, EGesithWeaponType::GreatSword, EGesithWeaponType::Spear, EGesithWeaponType::GreatSpear, EGesithWeaponType::Axe, EGesithWeaponType::GreatAxe, EGesithWeaponType::Bow };
+
+	const int32 Index = FMath::Clamp(WeaponNumber, 1, static_cast<int32>(UE_ARRAY_COUNT(LineWeapons))) - 1;
+
+	return LineWeapons[Index];
+}
+
+void ACombatCharacter::SetWeapon(int32 WeaponNumber)
 {
 	if (HasAuthority())
 	{
-		ServerSetMelee_Implementation(WeaponNumber);
+		ServerSetWeapon_Implementation(WeaponNumber);
 	}
 	else
 	{
-		ServerSetMelee(WeaponNumber);
+		ServerSetWeapon(WeaponNumber);
 	}
 }
 
-void ACombatCharacter::ServerSetMelee_Implementation(int32 WeaponNumber)
+void ACombatCharacter::ServerSetWeapon_Implementation(int32 WeaponNumber)
 {
 #if !UE_BUILD_SHIPPING
-	static const EGesithWeaponType MeleeWeapons[] = { EGesithWeaponType::Sword, EGesithWeaponType::GreatSword, EGesithWeaponType::Spear, EGesithWeaponType::GreatSpear, EGesithWeaponType::Axe, EGesithWeaponType::GreatAxe };
+	SetMainWeapon(WeaponFromNumber(WeaponNumber));
 
-	if (WeaponNumber >= 1 && WeaponNumber <= static_cast<int32>(UE_ARRAY_COUNT(MeleeWeapons)))
-	{
-		SetMeleeWeapon(MeleeWeapons[WeaponNumber - 1]);
-
-		ShowCombatDebugMessage(FString::Printf(TEXT("Melee weapon: %s"), *GetCurrentWeaponStats().DisplayName.ToString()), FColor::Green);
-	}
+	ShowCombatDebugMessage(FString::Printf(TEXT("Line weapon: %s"), *GetWeaponStats(MainWeapon).DisplayName.ToString()), FColor::Green);
 #endif
 }
 
-TArray<ACombatCharacter*> ACombatCharacter::SpawnSquadMembers(int32 SquadSize)
+TArray<ACombatCharacter*> ACombatCharacter::SpawnSquadMembers(int32 SquadSize, EGesithWeaponType Weapon)
 {
 	TArray<ACombatCharacter*> Soldiers;
 
@@ -967,7 +990,7 @@ TArray<ACombatCharacter*> ACombatCharacter::SpawnSquadMembers(int32 SquadSize)
 	{
 		const FVector Location = GetActorLocation() - Forward * (300.0f + (Index / 5) * BattleLineSpacing) + Right * ((Index % 5 - 2) * BattleLineSpacing);
 
-		ACombatCharacter* Soldier = SpawnSoldier(Location, Forward.Rotation(), TeamId);
+		ACombatCharacter* Soldier = SpawnSoldier(Location, Forward.Rotation(), TeamId, Weapon);
 		ACombatSoldierAIController* SoldierAI = Soldier ? Cast<ACombatSoldierAIController>(Soldier->GetController()) : nullptr;
 
 		if (SoldierAI)
@@ -984,19 +1007,19 @@ TArray<ACombatCharacter*> ACombatCharacter::SpawnSquadMembers(int32 SquadSize)
 	return Soldiers;
 }
 
-void ACombatCharacter::SpawnEnemies(int32 EnemyCount)
+void ACombatCharacter::SpawnEnemies(int32 EnemyCount, int32 WeaponNumber)
 {
 	if (HasAuthority())
 	{
-		ServerSpawnEnemies_Implementation(EnemyCount);
+		ServerSpawnEnemies_Implementation(EnemyCount, WeaponNumber);
 	}
 	else
 	{
-		ServerSpawnEnemies(EnemyCount);
+		ServerSpawnEnemies(EnemyCount, WeaponNumber);
 	}
 }
 
-void ACombatCharacter::ServerSpawnEnemies_Implementation(int32 EnemyCount)
+void ACombatCharacter::ServerSpawnEnemies_Implementation(int32 EnemyCount, int32 WeaponNumber)
 {
 #if !UE_BUILD_SHIPPING
 	EnemyCount = FMath::Clamp(EnemyCount, 1, 100);
@@ -1017,14 +1040,14 @@ void ACombatCharacter::ServerSpawnEnemies_Implementation(int32 EnemyCount)
 	{
 		const float Offset = (Index - (EnemyCount - 1) * 0.5f) * BattleLineSpacing;
 
-		SpawnSoldier(LineCenter + Right * Offset, (-Forward).Rotation(), EnemyTeam);
+		SpawnSoldier(LineCenter + Right * Offset, (-Forward).Rotation(), EnemyTeam, WeaponFromNumber(WeaponNumber));
 	}
 
 	ShowBattleStatus();
 #endif
 }
 
-ACombatCharacter* ACombatCharacter::SpawnSoldier(const FVector& Location, const FRotator& Facing, int32 Team)
+ACombatCharacter* ACombatCharacter::SpawnSoldier(const FVector& Location, const FRotator& Facing, int32 Team, EGesithWeaponType Weapon)
 {
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
@@ -1043,6 +1066,7 @@ ACombatCharacter* ACombatCharacter::SpawnSoldier(const FVector& Location, const 
 	}
 
 	Soldier->SetTeam(Team);
+	Soldier->SetMainWeapon(Weapon);
 
 	return Soldier;
 }
@@ -1692,7 +1716,7 @@ void ACombatCharacter::BeginPlay()
 	bDefaultUseControllerRotationYaw = bUseControllerRotationYaw;
 
 	// slot 1 holds the melee weapon, then show the weapon in hand
-	UpdateMeleeSlot();
+	UpdateWeaponSlots();
 
 	if (HasAuthority())
 	{
@@ -1774,8 +1798,8 @@ void ACombatCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(ACombatCharacter, CurrentWeaponSlot);
 	DOREPLIFETIME(ACombatCharacter, Arrows);
 	DOREPLIFETIME(ACombatCharacter, MaxArrows);
-	DOREPLIFETIME(ACombatCharacter, MeleeWeapon);
-	DOREPLIFETIME_CONDITION(ACombatCharacter, bSquadRanged, COND_OwnerOnly);
+	DOREPLIFETIME(ACombatCharacter, MainWeapon);
+	DOREPLIFETIME_CONDITION(ACombatCharacter, bSquadSidearms, COND_OwnerOnly);
 }
 
 #undef LOCTEXT_NAMESPACE

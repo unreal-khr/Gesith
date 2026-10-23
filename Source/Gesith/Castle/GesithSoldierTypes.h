@@ -65,9 +65,9 @@ struct FSoldierRecord
 	UPROPERTY(BlueprintReadOnly, Category="Soldier|Stats")
 	float WeaponSkill = 10.0f;
 
-	/** The one melee weapon this soldier fights with, next to the bow everyone carries. Recruits start with a sword */
+	/** The weapon of this soldier's line: a melee weapon for infantry, or the bow for archers. Recruits start with a sword */
 	UPROPERTY(BlueprintReadOnly, Category="Soldier")
-	EGesithWeaponType MeleeWeapon = EGesithWeaponType::Sword;
+	EGesithWeaponType MainWeapon = EGesithWeaponType::Sword;
 
 	/** If true, the soldier spends their time at the training ground */
 	UPROPERTY(BlueprintReadOnly, Category="Soldier")
