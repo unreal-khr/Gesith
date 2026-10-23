@@ -60,15 +60,15 @@ protected:
 	TObjectPtr<UInputMappingContext> CastleMappingContext;
 	/** Key that orders the squad to follow */
 	UPROPERTY(EditAnywhere, Category="Input|Squad")
-	FKey SquadFollowKey = EKeys::One;
+	FKey SquadFollowKey = EKeys::F1;
 
 	/** Key that orders the squad to hold where you stand */
 	UPROPERTY(EditAnywhere, Category="Input|Squad")
-	FKey SquadHoldKey = EKeys::Two;
+	FKey SquadHoldKey = EKeys::F2;
 
 	/** Key that orders the squad to charge */
 	UPROPERTY(EditAnywhere, Category="Input|Squad")
-	FKey SquadChargeKey = EKeys::Three;
+	FKey SquadChargeKey = EKeys::F3;
 
 	/** Squad order inputs, created at runtime like the castle menu input */
 	UPROPERTY(Transient)

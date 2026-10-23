@@ -332,7 +332,7 @@ void ACombatCharacter::ServerSpawnSquad_Implementation(int32 SquadSize)
 
 	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
 
-	ShowCombatDebugMessage(FString::Printf(TEXT("Squad of %d is following you. 1 Follow, 2 Hold, 3 Charge"), Count), FColor::Green);
+	ShowCombatDebugMessage(FString::Printf(TEXT("Squad of %d is following you. F1 Follow, F2 Hold, F3 Charge"), Count), FColor::Green);
 #endif
 }
 
@@ -370,7 +370,7 @@ void ACombatCharacter::MusterFromCastle(AGesithCastle* Castle)
 
 	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
 
-	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers summoned. 1 Follow, 2 Hold, 3 Charge"), Count), FColor::Green);
+	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers summoned. F1 Follow, F2 Hold, F3 Charge"), Count), FColor::Green);
 }
 
 void ACombatCharacter::DismissToCastle(AGesithCastle* Castle)

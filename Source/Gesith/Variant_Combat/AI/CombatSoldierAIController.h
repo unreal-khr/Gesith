@@ -86,6 +86,22 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Castle", meta = (ClampMin = 0, ClampMax = 30, Units = "s"))
 	float MaxDrillInterval = 4.0f;
 
+	/** How quickly the soldier turns to face where it walks */
+	UPROPERTY(EditAnywhere, Category="Soldier", meta = (ClampMin = 0, ClampMax = 50))
+	float TurnSpeed = 8.0f;
+
+	/** Walking speed while going about castle chores, as a fraction of full speed */
+	UPROPERTY(EditAnywhere, Category="Castle", meta = (ClampMin = 0.1, ClampMax = 1))
+	float StrollSpeed = 0.4f;
+
+	/** Shortest time spent on one chore before picking another */
+	UPROPERTY(EditAnywhere, Category="Castle", meta = (ClampMin = 0, ClampMax = 300, Units = "s"))
+	float MinChoreTime = 10.0f;
+
+	/** Longest time spent on one chore before picking another */
+	UPROPERTY(EditAnywhere, Category="Castle", meta = (ClampMin = 0, ClampMax = 300, Units = "s"))
+	float MaxChoreTime = 25.0f;
+
 	/** Soldiers closer than this to their slot stop walking */
 	UPROPERTY(EditAnywhere, Category="Squad", meta = (ClampMin = 0, ClampMax = 500, Units = "cm"))
 	float SlotTolerance = 60.0f;
@@ -128,6 +144,13 @@ protected:
 
 	/** Time of the next practice swing */
 	float NextDrillTime = 0.0f;
+
+	/** Where the soldier is spending free time in the castle, and which way they face there */
+	FVector ChoreLocation = FVector::ZeroVector;
+	FVector ChoreForward = FVector::ForwardVector;
+
+	/** Time at which the soldier picks a new chore. Negative to pick one right away */
+	float NextChoreTime = -1.0f;
 
 	/** Current enemy */
 	TWeakObjectPtr<ACombatCharacter> Target;
@@ -195,5 +218,5 @@ protected:
 	FVector GetFormationSlot(const FVector& Origin, const FVector& Forward) const;
 
 	/** Walks to the slot and faces the formation's direction once there. Returns true once at the slot */
-	bool MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime);
+	bool MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime, float SpeedScale = 1.0f);
 };

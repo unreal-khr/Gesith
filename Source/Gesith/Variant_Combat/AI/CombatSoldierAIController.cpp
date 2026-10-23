@@ -68,6 +68,7 @@ void ACombatSoldierAIController::ReturnToPost()
 	bInSquad = false;
 	SquadLeader = nullptr;
 	SquadOrder = ESquadOrder::Charge;
+	NextChoreTime = -1.0f;
 	Target = nullptr;
 
 	Castle->SoldierReturned(RosterId, bFought);
@@ -172,9 +173,23 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 	}
 	else if (bAtCastle)
 	{
-		// castle soldiers defend their post
 		bool bTraining = false;
 		Castle->GetSoldierPost(RosterId, Slot, SlotForward, bTraining);
+
+		// soldiers off duty wander between chores, the ones in training stay at the training ground
+		if (!bTraining)
+		{
+			if (NextChoreTime < 0.0f || Now >= NextChoreTime)
+			{
+				Castle->PickChoreSpot(ChoreLocation, ChoreForward);
+				NextChoreTime = Now + FMath::FRandRange(MinChoreTime, MaxChoreTime);
+			}
+
+			Slot = ChoreLocation;
+			SlotForward = ChoreForward;
+		}
+
+		// castle soldiers defend wherever they are
 		EngageCenter = Slot;
 		EngageRange = HoldEngageRange;
 	}
@@ -202,7 +217,7 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 	}
 	else if (bAtCastle)
 	{
-		const bool bAtPost = MoveToSlot(Soldier, Slot, SlotForward, DeltaTime);
+		const bool bAtPost = MoveToSlot(Soldier, Slot, SlotForward, DeltaTime, StrollSpeed);
 
 		// soldiers at the training ground practice their swings
 		const FSoldierRecord* Record = Castle->Roster.FindByPredicate([this](const FSoldierRecord& Other) { return Other.Id == RosterId; });
@@ -230,7 +245,8 @@ void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float De
 
 	if (ToTarget.Size2D() > AttackRange)
 	{
-		// walk straight at the target
+		// walk straight at the target, facing it
+		Soldier->SetActorRotation(FMath::RInterpTo(Soldier->GetActorRotation(), LookRotation, DeltaTime, TurnSpeed));
 		Soldier->AddMovementInput(ToTarget.GetSafeNormal2D(), 1.0f);
 
 		return;
@@ -262,17 +278,21 @@ void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float De
 	}
 }
 
-bool ACombatSoldierAIController::MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime)
+bool ACombatSoldierAIController::MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime, float SpeedScale)
 {
 	const FVector ToSlot = Slot - Soldier->GetActorLocation();
 	const float Distance = ToSlot.Size2D();
 
 	if (Distance > SlotTolerance)
 	{
-		SetControlRotation(FRotator(0.0f, ToSlot.Rotation().Yaw, 0.0f));
+		const FRotator MoveRotation(0.0f, ToSlot.Rotation().Yaw, 0.0f);
+
+		// the character doesn't turn on its own, so face the way it walks
+		SetControlRotation(MoveRotation);
+		Soldier->SetActorRotation(FMath::RInterpTo(Soldier->GetActorRotation(), MoveRotation, DeltaTime, TurnSpeed));
 
 		// slow down near the slot so soldiers don't overshoot and wobble
-		Soldier->AddMovementInput(ToSlot.GetSafeNormal2D(), FMath::Clamp(Distance / 300.0f, 0.3f, 1.0f));
+		Soldier->AddMovementInput(ToSlot.GetSafeNormal2D(), SpeedScale * FMath::Clamp(Distance / 300.0f, 0.3f, 1.0f));
 
 		return false;
 	}

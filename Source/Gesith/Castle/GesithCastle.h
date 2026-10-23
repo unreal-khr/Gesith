@@ -44,6 +44,13 @@ class AGesithCastle : public AActor
 	UPROPERTY(VisibleAnywhere, Category="Components")
 	UStaticMeshComponent* FrontRightWall;
 
+	/** Grey box stand-ins for the places soldiers visit in their free time */
+	UPROPERTY(VisibleAnywhere, Category="Components")
+	UStaticMeshComponent* Blacksmith;
+
+	UPROPERTY(VisibleAnywhere, Category="Components")
+	UStaticMeshComponent* Well;
+
 public:
 
 	/** Castle name shown in the menu */
@@ -231,6 +238,9 @@ public:
 	/** Returns the character of a soldier in the roster, or nullptr. Server only */
 	ACombatCharacter* GetSoldierPawn(int32 SoldierId) const;
 
+	/** Picks a random place for an off duty soldier to spend time: resting at the barracks, the blacksmith, the well, or a stroll */
+	void PickChoreSpot(FVector& OutLocation, FVector& OutForward) const;
+
 	/** Finds where a soldier stands while in the castle: the barracks, or the training ground while training. Returns false if the soldier isn't in the roster */
 	bool GetSoldierPost(int32 SoldierId, FVector& OutLocation, FVector& OutForward, bool& bOutTraining) const;
 
@@ -253,6 +263,10 @@ protected:
 
 	/** Raises the stats of every soldier in training */
 	void RunTrainingSession();
+
+	/** Centers of the blacksmith and the well, relative to the castle */
+	FVector GetBlacksmithCenter() const;
+	FVector GetWellCenter() const;
 
 	/** Removes one random soldier from the roster */
 	void DesertOne();

@@ -43,6 +43,14 @@ AGesithCastle::AGesithCastle()
 	FrontLeftWall = MakeWall(TEXT("FrontLeftWall"));
 	FrontRightWall = MakeWall(TEXT("FrontRightWall"));
 
+	Blacksmith = MakeWall(TEXT("Blacksmith"));
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMeshFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+
+	Well = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Well"));
+	Well->SetupAttachment(RootComponent);
+	Well->SetStaticMesh(CylinderMeshFinder.Object);
+
 	// wages from recruit to elite
 	WageByRank = { 2, 3, 4, 6, 8 };
 
@@ -77,6 +85,10 @@ void AGesithCastle::OnConstruction(const FTransform& Transform)
 
 	PlaceWall(FrontLeftWall, FVector(Half, -SideCenter, WallZ), FVector(WallThickness, SideLength, WallHeight));
 	PlaceWall(FrontRightWall, FVector(Half, SideCenter, WallZ), FVector(WallThickness, SideLength, WallHeight));
+
+	// the blacksmith stands against the right wall, the well on the left side near the gate
+	PlaceWall(Blacksmith, GetBlacksmithCenter() + FVector(0.0f, 0.0f, 125.0f), FVector(400.0f, 250.0f, 250.0f));
+	PlaceWall(Well, GetWellCenter() + FVector(0.0f, 0.0f, 50.0f), FVector(150.0f, 150.0f, 100.0f));
 }
 
 void AGesithCastle::BeginPlay()
@@ -250,6 +262,66 @@ ACombatCharacter* AGesithCastle::GetSoldierPawn(int32 SoldierId) const
 	const TWeakObjectPtr<ACombatCharacter>* Pawn = SoldierPawns.Find(SoldierId);
 
 	return Pawn ? Pawn->Get() : nullptr;
+}
+
+FVector AGesithCastle::GetBlacksmithCenter() const
+{
+	const float Half = CastleSize * 0.5f;
+
+	return FVector(-Half * 0.3f, Half - WallThickness - 200.0f, 0.0f);
+}
+
+FVector AGesithCastle::GetWellCenter() const
+{
+	const float Half = CastleSize * 0.5f;
+
+	return FVector(Half * 0.35f, -Half * 0.5f, 0.0f);
+}
+
+void AGesithCastle::PickChoreSpot(FVector& OutLocation, FVector& OutForward) const
+{
+	const float Half = CastleSize * 0.5f;
+
+	FVector LocalSpot;
+	FVector LookAt;
+
+	// resting is the most common way to pass the time
+	const float Roll = FMath::FRand();
+
+	if (Roll < 0.4f)
+	{
+		// sit around in the barracks corner at the back
+		LocalSpot = FVector(-Half * 0.6f, -Half * 0.4f, 0.0f) + FVector(FMath::RandPointInCircle(Half * 0.25f), 0.0f);
+		LookAt = LocalSpot + FVector(FMath::RandPointInCircle(100.0f), 0.0f);
+	}
+	else if (Roll < 0.6f)
+	{
+		// stand in front of the blacksmith, waiting on gear
+		LookAt = GetBlacksmithCenter();
+		LocalSpot = LookAt + FVector(FMath::FRandRange(-200.0f, 200.0f), -FMath::FRandRange(220.0f, 350.0f), 0.0f);
+	}
+	else if (Roll < 0.8f)
+	{
+		// gather around the well
+		LookAt = GetWellCenter();
+		LocalSpot = LookAt + FVector(FVector2D(FMath::FRandRange(130.0f, 220.0f), 0.0f).GetRotated(FMath::FRandRange(0.0f, 360.0f)), 0.0f);
+	}
+	else
+	{
+		// stroll somewhere inside the walls
+		LocalSpot = FVector(FMath::FRandRange(-Half * 0.7f, Half * 0.7f), FMath::FRandRange(-Half * 0.7f, Half * 0.7f), 0.0f);
+		LookAt = LocalSpot + FVector(FMath::RandPointInCircle(100.0f), 0.0f);
+	}
+
+	const FTransform& CastleTransform = GetActorTransform();
+
+	OutLocation = CastleTransform.TransformPosition(LocalSpot);
+	OutForward = CastleTransform.TransformVector(LookAt - LocalSpot).GetSafeNormal2D();
+
+	if (OutForward.IsNearlyZero())
+	{
+		OutForward = GetActorForwardVector();
+	}
 }
 
 bool AGesithCastle::GetSoldierPost(int32 SoldierId, FVector& OutLocation, FVector& OutForward, bool& bOutTraining) const
