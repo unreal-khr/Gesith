@@ -60,7 +60,7 @@ protected:
 
 	/** Castle menu while it's open */
 	UPROPERTY(Transient)
-	TObjectPtr<UCastleMenuWidget> CastleMenu;
+	TObjectPtr<UCastleMenuWidget> CastleMenuWidget;
 
 protected:
 
@@ -90,10 +90,17 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerCastlePromote(AGesithCastle* Castle, int32 SoldierId);
 
+	/** Console command: opens or closes the castle menu, same as the castle menu key */
+	UFUNCTION(Exec)
+	void CastleMenu();
+
 protected:
 
 	/** Opens the castle menu if the pawn is inside a castle, or closes it */
 	void ToggleCastleMenu();
+
+	/** Prints a castle menu message on screen for testing. Does nothing in shipping builds */
+	void ShowCastleDebugMessage(const FString& Message) const;
 
 	/** Closes the castle menu and gives the mouse back to the game */
 	void CloseCastleMenu();

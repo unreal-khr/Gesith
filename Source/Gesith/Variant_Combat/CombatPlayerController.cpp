@@ -17,6 +17,7 @@
 #include "EngineUtils.h"
 #include "GesithCastle.h"
 #include "CastleMenuWidget.h"
+#include "Engine/Engine.h"
 
 void ACombatPlayerController::BeginPlay()
 {
@@ -44,6 +45,9 @@ void ACombatPlayerController::BeginPlay()
 
 void ACombatPlayerController::SetupInputComponent()
 {
+	// the engine creates the InputComponent here; without it nothing can be bound
+	Super::SetupInputComponent();
+
 	// only add IMCs for local player controllers
 	if (IsLocalPlayerController())
 	{
@@ -65,25 +69,52 @@ void ACombatPlayerController::SetupInputComponent()
 			}
 
 			// the castle menu input is built here instead of in an asset
-			CastleMenuAction = NewObject<UInputAction>(this, TEXT("IA_CastleMenu"));
-			CastleMenuAction->ValueType = EInputActionValueType::Boolean;
+			if (!CastleMenuAction)
+			{
+				CastleMenuAction = NewObject<UInputAction>(this);
+				CastleMenuAction->ValueType = EInputActionValueType::Boolean;
+			}
 
-			CastleMappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Castle"));
-			CastleMappingContext->MapKey(CastleMenuAction, CastleMenuKey);
+			if (!CastleMappingContext)
+			{
+				CastleMappingContext = NewObject<UInputMappingContext>(this);
+				CastleMappingContext->MapKey(CastleMenuAction, CastleMenuKey);
+			}
 
 			Subsystem->AddMappingContext(CastleMappingContext, 1);
 		}
 
-		if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
+		UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent);
+
+		if (EnhancedInputComponent && CastleMenuAction)
 		{
 			EnhancedInputComponent->BindAction(CastleMenuAction, ETriggerEvent::Started, this, &ACombatPlayerController::ToggleCastleMenu);
+		}
+		else
+		{
+			UE_LOG(LogGesith, Warning, TEXT("Castle menu input could not be bound (no enhanced input component)."));
 		}
 	}
 }
 
+void ACombatPlayerController::CastleMenu()
+{
+	ToggleCastleMenu();
+}
+
+void ACombatPlayerController::ShowCastleDebugMessage(const FString& Message) const
+{
+#if !UE_BUILD_SHIPPING
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Yellow, FString::Printf(TEXT("Castle menu: %s"), *Message));
+	}
+#endif
+}
+
 void ACombatPlayerController::ToggleCastleMenu()
 {
-	if (CastleMenu)
+	if (CastleMenuWidget)
 	{
 		CloseCastleMenu();
 		return;
@@ -93,15 +124,33 @@ void ACombatPlayerController::ToggleCastleMenu()
 
 	if (!Castle)
 	{
+		int32 CastleCount = 0;
+
+		for (TActorIterator<AGesithCastle> It(GetWorld()); It; ++It)
+		{
+			++CastleCount;
+		}
+
+		ShowCastleDebugMessage(CastleCount == 0
+			? TEXT("no castle in this level")
+			: FString::Printf(TEXT("not inside a castle (%d in level, you are at %s)"), CastleCount, GetPawn() ? *GetPawn()->GetActorLocation().ToCompactString() : TEXT("no pawn")));
+
 		return;
 	}
 
-	CastleMenu = CreateWidget<UCastleMenuWidget>(this, UCastleMenuWidget::StaticClass());
+	CastleMenuWidget = CreateWidget<UCastleMenuWidget>(this, UCastleMenuWidget::StaticClass());
 
-	if (CastleMenu)
+	if (!CastleMenuWidget)
 	{
-		CastleMenu->SetCastle(Castle);
-		CastleMenu->AddToPlayerScreen(10);
+		ShowCastleDebugMessage(TEXT("could not create the menu widget"));
+		return;
+	}
+
+	{
+		CastleMenuWidget->SetCastle(Castle);
+		CastleMenuWidget->AddToPlayerScreen(10);
+
+		ShowCastleDebugMessage(FString::Printf(TEXT("opened %s"), *Castle->CastleName));
 
 		// free the mouse so the buttons can be clicked, while the game keeps running
 		SetShowMouseCursor(true);
@@ -114,10 +163,10 @@ void ACombatPlayerController::ToggleCastleMenu()
 
 void ACombatPlayerController::CloseCastleMenu()
 {
-	if (CastleMenu)
+	if (CastleMenuWidget)
 	{
-		CastleMenu->RemoveFromParent();
-		CastleMenu = nullptr;
+		CastleMenuWidget->RemoveFromParent();
+		CastleMenuWidget = nullptr;
 	}
 
 	SetShowMouseCursor(false);
