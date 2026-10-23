@@ -304,6 +304,14 @@ public:
 	UFUNCTION(Exec)
 	void ClearBattle();
 
+	/** Console command: spawns soldiers on your team that follow your orders */
+	UFUNCTION(Exec)
+	void SpawnSquad(int32 SquadSize = 5);
+
+	/** Console command: spawns an enemy line far in front of you that charges */
+	UFUNCTION(Exec)
+	void SpawnEnemies(int32 EnemyCount = 5);
+
 	/** Console command for solo testing. Toggles guarding every attack from the front without holding the input */
 	UFUNCTION(Exec)
 	void AutoGuard();
@@ -373,6 +381,17 @@ protected:
 	/** Asks the server to remove every AI soldier */
 	UFUNCTION(Server, Reliable)
 	void ServerClearBattle();
+
+	/** Asks the server to spawn a squad for this character */
+	UFUNCTION(Server, Reliable)
+	void ServerSpawnSquad(int32 SquadSize);
+
+	/** Asks the server to spawn enemies in front of this character */
+	UFUNCTION(Server, Reliable)
+	void ServerSpawnEnemies(int32 EnemyCount);
+
+	/** Spawns one AI soldier on a team. Server only */
+	ACombatCharacter* SpawnSoldier(const FVector& Location, const FRotator& Facing, int32 Team);
 
 	/** Prints how many soldiers are still alive on each team */
 	void ShowBattleStatus() const;

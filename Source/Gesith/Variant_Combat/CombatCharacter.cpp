@@ -258,9 +258,6 @@ void ACombatCharacter::ServerSpawnBattle_Implementation(int32 SoldiersPerTeam)
 	const FVector Right = FVector::CrossProduct(FVector::UpVector, Forward);
 	const FVector Center = GetActorLocation() + Forward * (BattleLineGap * 0.5f + 300.0f);
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-
 	for (int32 Team = 1; Team <= 2; ++Team)
 	{
 		// team 1 is the near line, team 2 the far one
@@ -272,20 +269,7 @@ void ACombatCharacter::ServerSpawnBattle_Implementation(int32 SoldiersPerTeam)
 			const float Offset = (Index - (SoldiersPerTeam - 1) * 0.5f) * BattleLineSpacing;
 			const FVector Location = LineCenter + Right * Offset;
 
-			// soldiers use the same Blueprint as the player, so they get the same mesh, animations and combat code
-			ACombatCharacter* Soldier = GetWorld()->SpawnActor<ACombatCharacter>(GetClass(), Location, Facing, SpawnParams);
-
-			if (!Soldier)
-			{
-				continue;
-			}
-
-			if (ACombatSoldierAIController* SoldierAI = GetWorld()->SpawnActor<ACombatSoldierAIController>())
-			{
-				SoldierAI->Possess(Soldier);
-			}
-
-			Soldier->SetTeam(Team);
+			SpawnSoldier(Location, Facing, Team);
 		}
 	}
 
@@ -316,6 +300,115 @@ void ACombatCharacter::ServerClearBattle_Implementation()
 		}
 	}
 #endif
+}
+
+void ACombatCharacter::SpawnSquad(int32 SquadSize)
+{
+	if (HasAuthority())
+	{
+		ServerSpawnSquad_Implementation(SquadSize);
+	}
+	else
+	{
+		ServerSpawnSquad(SquadSize);
+	}
+}
+
+void ACombatCharacter::ServerSpawnSquad_Implementation(int32 SquadSize)
+{
+#if !UE_BUILD_SHIPPING
+	SquadSize = FMath::Clamp(SquadSize, 1, 50);
+
+	// a squad needs a side to fight for
+	if (TeamId == 0)
+	{
+		SetTeam(1);
+	}
+
+	// spawn behind the leader, the follow order lines them up afterwards
+	const FVector Forward = GetActorForwardVector().GetSafeNormal2D();
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, Forward);
+
+	for (int32 Index = 0; Index < SquadSize; ++Index)
+	{
+		const FVector Location = GetActorLocation() - Forward * (300.0f + (Index / 5) * BattleLineSpacing) + Right * ((Index % 5 - 2) * BattleLineSpacing);
+
+		if (ACombatCharacter* Soldier = SpawnSoldier(Location, Forward.Rotation(), TeamId))
+		{
+			if (ACombatSoldierAIController* SoldierAI = Cast<ACombatSoldierAIController>(Soldier->GetController()))
+			{
+				SoldierAI->JoinSquad(this);
+			}
+		}
+	}
+
+	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
+
+	ShowCombatDebugMessage(FString::Printf(TEXT("Squad of %d is following you. 1 Follow, 2 Hold, 3 Charge"), Count), FColor::Green);
+#endif
+}
+
+void ACombatCharacter::SpawnEnemies(int32 EnemyCount)
+{
+	if (HasAuthority())
+	{
+		ServerSpawnEnemies_Implementation(EnemyCount);
+	}
+	else
+	{
+		ServerSpawnEnemies(EnemyCount);
+	}
+}
+
+void ACombatCharacter::ServerSpawnEnemies_Implementation(int32 EnemyCount)
+{
+#if !UE_BUILD_SHIPPING
+	EnemyCount = FMath::Clamp(EnemyCount, 1, 100);
+
+	if (TeamId == 0)
+	{
+		SetTeam(1);
+	}
+
+	const int32 EnemyTeam = TeamId == 1 ? 2 : 1;
+
+	// a line far enough away to give the squad time to form up
+	const FVector Forward = GetActorForwardVector().GetSafeNormal2D();
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, Forward);
+	const FVector LineCenter = GetActorLocation() + Forward * 2000.0f;
+
+	for (int32 Index = 0; Index < EnemyCount; ++Index)
+	{
+		const float Offset = (Index - (EnemyCount - 1) * 0.5f) * BattleLineSpacing;
+
+		SpawnSoldier(LineCenter + Right * Offset, (-Forward).Rotation(), EnemyTeam);
+	}
+
+	ShowBattleStatus();
+#endif
+}
+
+ACombatCharacter* ACombatCharacter::SpawnSoldier(const FVector& Location, const FRotator& Facing, int32 Team)
+{
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+	// soldiers use the same Blueprint as the player, so they get the same mesh, animations and combat code
+	ACombatCharacter* Soldier = GetWorld()->SpawnActor<ACombatCharacter>(GetClass(), Location, Facing, SpawnParams);
+
+	if (!Soldier)
+	{
+		return nullptr;
+	}
+
+	if (ACombatSoldierAIController* SoldierAI = GetWorld()->SpawnActor<ACombatSoldierAIController>())
+	{
+		SoldierAI->Possess(Soldier);
+	}
+
+	Soldier->SetTeam(Team);
+
+	return Soldier;
 }
 
 void ACombatCharacter::ShowBattleStatus() const
