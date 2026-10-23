@@ -54,6 +54,16 @@ struct FSoldierRecord
 	UPROPERTY(BlueprintReadOnly, Category="Soldier")
 	bool bTraining = false;
 
+	/** If true, the soldier has marched out with a lord and is not in the castle */
+	UPROPERTY(BlueprintReadOnly, Category="Soldier")
+	bool bInField = false;
+
+	/** Returns true if the soldier is in the castle, so they can train or march out */
+	bool IsAvailable() const
+	{
+		return !bInField;
+	}
+
 	/** Average of all stats, used for promotion */
 	float GetAverageStat() const
 	{

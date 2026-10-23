@@ -8,6 +8,9 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Net/UnrealNetwork.h"
 #include "Gesith.h"
+#include "CombatCharacter.h"
+#include "CombatSoldierAIController.h"
+#include "EngineUtils.h"
 
 AGesithCastle::AGesithCastle()
 {
@@ -39,6 +42,14 @@ AGesithCastle::AGesithCastle()
 	RightWall = MakeWall(TEXT("RightWall"));
 	FrontLeftWall = MakeWall(TEXT("FrontLeftWall"));
 	FrontRightWall = MakeWall(TEXT("FrontRightWall"));
+
+	Blacksmith = MakeWall(TEXT("Blacksmith"));
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMeshFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+
+	Well = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Well"));
+	Well->SetupAttachment(RootComponent);
+	Well->SetStaticMesh(CylinderMeshFinder.Object);
 
 	// wages from recruit to elite
 	WageByRank = { 2, 3, 4, 6, 8 };
@@ -74,6 +85,10 @@ void AGesithCastle::OnConstruction(const FTransform& Transform)
 
 	PlaceWall(FrontLeftWall, FVector(Half, -SideCenter, WallZ), FVector(WallThickness, SideLength, WallHeight));
 	PlaceWall(FrontRightWall, FVector(Half, SideCenter, WallZ), FVector(WallThickness, SideLength, WallHeight));
+
+	// the blacksmith stands against the right wall, the well on the left side near the gate
+	PlaceWall(Blacksmith, GetBlacksmithCenter() + FVector(0.0f, 0.0f, 125.0f), FVector(400.0f, 250.0f, 250.0f));
+	PlaceWall(Well, GetWellCenter() + FVector(0.0f, 0.0f, 50.0f), FVector(150.0f, 150.0f, 100.0f));
 }
 
 void AGesithCastle::BeginPlay()
@@ -106,6 +121,16 @@ void AGesithCastle::Tick(float DeltaSeconds)
 		TrainingTimer -= TrainingInterval;
 
 		RunTrainingSession();
+	}
+
+	// keep a character in the world for every soldier
+	PawnSyncTimer -= DeltaSeconds;
+
+	if (PawnSyncTimer <= 0.0f)
+	{
+		PawnSyncTimer = 1.0f;
+
+		SyncSoldierPawns();
 	}
 
 	DayTimer += DeltaSeconds;
@@ -166,7 +191,10 @@ void AGesithCastle::SetTraining(int32 SoldierId, bool bTraining)
 		return;
 	}
 
-	if (FSoldierRecord* Soldier = FindSoldier(SoldierId))
+	FSoldierRecord* Soldier = FindSoldier(SoldierId);
+
+	// soldiers out in the field or recovering can't train
+	if (Soldier && (Soldier->IsAvailable() || !bTraining))
 	{
 		Soldier->bTraining = bTraining;
 
@@ -222,6 +250,293 @@ int32 AGesithCastle::GetDailyWages() const
 	}
 
 	return Total;
+}
+
+bool AGesithCastle::HasSoldiersInField() const
+{
+	return Roster.ContainsByPredicate([](const FSoldierRecord& Soldier) { return Soldier.bInField; });
+}
+
+ACombatCharacter* AGesithCastle::GetSoldierPawn(int32 SoldierId) const
+{
+	const TWeakObjectPtr<ACombatCharacter>* Pawn = SoldierPawns.Find(SoldierId);
+
+	return Pawn ? Pawn->Get() : nullptr;
+}
+
+FVector AGesithCastle::GetBlacksmithCenter() const
+{
+	const float Half = CastleSize * 0.5f;
+
+	return FVector(-Half * 0.3f, Half - WallThickness - 200.0f, 0.0f);
+}
+
+FVector AGesithCastle::GetWellCenter() const
+{
+	const float Half = CastleSize * 0.5f;
+
+	return FVector(Half * 0.35f, -Half * 0.5f, 0.0f);
+}
+
+void AGesithCastle::PickChoreSpot(FVector& OutLocation, FVector& OutForward) const
+{
+	const float Half = CastleSize * 0.5f;
+
+	FVector LocalSpot;
+	FVector LookAt;
+
+	// resting is the most common way to pass the time
+	const float Roll = FMath::FRand();
+
+	if (Roll < 0.4f)
+	{
+		// sit around in the barracks corner at the back
+		LocalSpot = FVector(-Half * 0.6f, -Half * 0.4f, 0.0f) + FVector(FMath::RandPointInCircle(Half * 0.25f), 0.0f);
+		LookAt = LocalSpot + FVector(FMath::RandPointInCircle(100.0f), 0.0f);
+	}
+	else if (Roll < 0.6f)
+	{
+		// stand in front of the blacksmith, waiting on gear
+		LookAt = GetBlacksmithCenter();
+		LocalSpot = LookAt + FVector(FMath::FRandRange(-200.0f, 200.0f), -FMath::FRandRange(220.0f, 350.0f), 0.0f);
+	}
+	else if (Roll < 0.8f)
+	{
+		// gather around the well
+		LookAt = GetWellCenter();
+		LocalSpot = LookAt + FVector(FVector2D(FMath::FRandRange(130.0f, 220.0f), 0.0f).GetRotated(FMath::FRandRange(0.0f, 360.0f)), 0.0f);
+	}
+	else
+	{
+		// stroll somewhere inside the walls
+		LocalSpot = FVector(FMath::FRandRange(-Half * 0.7f, Half * 0.7f), FMath::FRandRange(-Half * 0.7f, Half * 0.7f), 0.0f);
+		LookAt = LocalSpot + FVector(FMath::RandPointInCircle(100.0f), 0.0f);
+	}
+
+	const FTransform& CastleTransform = GetActorTransform();
+
+	OutLocation = CastleTransform.TransformPosition(LocalSpot);
+	OutForward = CastleTransform.TransformVector(LookAt - LocalSpot).GetSafeNormal2D();
+
+	if (OutForward.IsNearlyZero())
+	{
+		OutForward = GetActorForwardVector();
+	}
+}
+
+bool AGesithCastle::GetSoldierPost(int32 SoldierId, FVector& OutLocation, FVector& OutForward, bool& bOutTraining) const
+{
+	const FSoldierRecord* Soldier = Roster.FindByPredicate([SoldierId](const FSoldierRecord& Other) { return Other.Id == SoldierId; });
+
+	if (!Soldier)
+	{
+		return false;
+	}
+
+	bOutTraining = Soldier->bTraining;
+
+	// count the soldiers before this one in the same place, so everyone gets their own spot
+	int32 Index = 0;
+
+	for (const FSoldierRecord& Other : Roster)
+	{
+		if (Other.Id == SoldierId)
+		{
+			break;
+		}
+
+		Index += Other.bTraining == Soldier->bTraining ? 1 : 0;
+	}
+
+	const float Half = CastleSize * 0.5f;
+	const float Spacing = 150.0f;
+	const int32 Width = 5;
+
+	// the barracks line up in the back half, the training ground sits by the gate. Rows go toward the back wall
+	const FVector Origin = bOutTraining ? FVector(Half * 0.2f, Half * 0.2f, 0.0f) : FVector(-Half * 0.5f, -Half * 0.4f, 0.0f);
+	const FVector LocalPost = Origin + FVector(-(Index / Width) * Spacing, (Index % Width) * Spacing, 0.0f);
+
+	OutLocation = GetActorTransform().TransformPosition(LocalPost);
+	OutForward = GetActorForwardVector().GetSafeNormal2D();
+
+	return true;
+}
+
+void AGesithCastle::SyncSoldierPawns()
+{
+	// soldiers who left the roster take their character with them, unless it's lying dead on the field
+	for (auto It = SoldierPawns.CreateIterator(); It; ++It)
+	{
+		ACombatCharacter* Pawn = It.Value().Get();
+		const int32 SoldierId = It.Key();
+
+		if (!Pawn)
+		{
+			It.RemoveCurrent();
+		}
+		else if (!FindSoldier(SoldierId))
+		{
+			if (!Pawn->IsDead())
+			{
+				Pawn->Destroy();
+			}
+
+			It.RemoveCurrent();
+		}
+	}
+
+	UClass* Class = FindSoldierClass();
+
+	if (!Class)
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+	bool bChanged = false;
+
+	for (FSoldierRecord& Soldier : Roster)
+	{
+		if (SoldierPawns.Contains(Soldier.Id))
+		{
+			continue;
+		}
+
+		FVector Location;
+		FVector Forward;
+		bool bTraining = false;
+		GetSoldierPost(Soldier.Id, Location, Forward, bTraining);
+
+		ACombatCharacter* Pawn = GetWorld()->SpawnActor<ACombatCharacter>(Class, Location + FVector(0.0f, 0.0f, 100.0f), Forward.Rotation(), SpawnParams);
+
+		if (!Pawn)
+		{
+			continue;
+		}
+
+		ACombatSoldierAIController* SoldierAI = GetWorld()->SpawnActor<ACombatSoldierAIController>();
+
+		if (!SoldierAI)
+		{
+			Pawn->Destroy();
+			continue;
+		}
+
+		SoldierAI->Possess(Pawn);
+		SoldierAI->SetRosterSoldier(this, Soldier);
+		Pawn->SetTeam(TeamId);
+
+		SoldierPawns.Add(Soldier.Id, Pawn);
+
+		// a soldier whose character went missing while summoned starts again at their post
+		if (Soldier.bInField)
+		{
+			Soldier.bInField = false;
+			bChanged = true;
+		}
+	}
+
+	if (bChanged)
+	{
+		NotifyChanged();
+	}
+}
+
+UClass* AGesithCastle::FindSoldierClass() const
+{
+	if (SoldierClass)
+	{
+		return SoldierClass;
+	}
+
+	// soldiers look like the players until they get their own Blueprint
+	for (TActorIterator<ACombatCharacter> It(GetWorld()); It; ++It)
+	{
+		if (It->IsPlayerControlled())
+		{
+			return It->GetClass();
+		}
+	}
+
+	return nullptr;
+}
+
+int32 AGesithCastle::GetAvailableCount() const
+{
+	int32 Count = 0;
+
+	for (const FSoldierRecord& Soldier : Roster)
+	{
+		Count += Soldier.IsAvailable() ? 1 : 0;
+	}
+
+	return Count;
+}
+
+TArray<FSoldierRecord> AGesithCastle::MusterSoldiers()
+{
+	TArray<FSoldierRecord> Mustered;
+
+	if (!HasAuthority())
+	{
+		return Mustered;
+	}
+
+	for (FSoldierRecord& Soldier : Roster)
+	{
+		if (Soldier.IsAvailable())
+		{
+			Soldier.bInField = true;
+			Soldier.bTraining = false;
+
+			Mustered.Add(Soldier);
+		}
+	}
+
+	if (Mustered.Num() > 0)
+	{
+		NotifyChanged();
+	}
+
+	return Mustered;
+}
+
+void AGesithCastle::SoldierReturned(int32 SoldierId, bool bFought)
+{
+	FSoldierRecord* Soldier = HasAuthority() ? FindSoldier(SoldierId) : nullptr;
+
+	if (!Soldier)
+	{
+		return;
+	}
+
+	Soldier->bInField = false;
+
+	// a real fight teaches more than the training ground
+	if (bFought)
+	{
+		for (float* Stat : { &Soldier->Strength, &Soldier->WeaponSkill })
+		{
+			*Stat = FMath::Min(*Stat + BattleGain * (1.0f - *Stat / StatCap), StatCap);
+		}
+	}
+
+	NotifyChanged();
+}
+
+void AGesithCastle::SoldierFell(int32 SoldierId)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (Roster.RemoveAll([SoldierId](const FSoldierRecord& Soldier) { return Soldier.Id == SoldierId; }) > 0)
+	{
+		NotifyChanged();
+	}
 }
 
 FText AGesithCastle::GetRankName(ESoldierRank Rank)
@@ -291,7 +606,7 @@ void AGesithCastle::RunTrainingSession()
 
 	for (FSoldierRecord& Soldier : Roster)
 	{
-		if (!Soldier.bTraining)
+		if (!Soldier.bTraining || !Soldier.IsAvailable())
 		{
 			continue;
 		}

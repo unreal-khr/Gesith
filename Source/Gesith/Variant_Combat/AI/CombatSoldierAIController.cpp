@@ -5,6 +5,8 @@
 #include "CombatCharacter.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
+#include "GesithCastle.h"
 
 ACombatSoldierAIController::ACombatSoldierAIController()
 {
@@ -27,14 +29,91 @@ void ACombatSoldierAIController::OnPawnDestroyed(AActor* DestroyedActor)
 	Destroy();
 }
 
+void ACombatSoldierAIController::SetRosterSoldier(AGesithCastle* Castle, const FSoldierRecord& Record)
+{
+	HomeCastle = Castle;
+	RosterId = Record.Id;
+
+	if (ACombatCharacter* Soldier = Cast<ACombatCharacter>(GetPawn()))
+	{
+		Soldier->ApplySoldierStats(Record.Health, Record.Strength);
+	}
+
+	// start from the class defaults so applying stats again after training doesn't stack
+	const ACombatSoldierAIController* Defaults = GetClass()->GetDefaultObject<ACombatSoldierAIController>();
+
+	// faster soldiers swing more often, up to twice as often at the stat cap
+	const float SpeedFactor = FMath::Clamp(1.0f - (Record.AttackSpeed - 10.0f) / 180.0f, 0.5f, 1.0f);
+	MinAttackInterval = Defaults->MinAttackInterval * SpeedFactor;
+	MaxAttackInterval = Defaults->MaxAttackInterval * SpeedFactor;
+
+	// skilled soldiers read attacks better
+	GuardChance = FMath::Clamp(0.3f + Record.WeaponSkill * 0.005f, 0.0f, 0.8f);
+}
+
+AGesithCastle* ACombatSoldierAIController::GetHomeCastle() const
+{
+	return HomeCastle.Get();
+}
+
+void ACombatSoldierAIController::ReturnToPost()
+{
+	AGesithCastle* Castle = HomeCastle.Get();
+
+	if (!bInSquad || !Castle)
+	{
+		return;
+	}
+
+	bInSquad = false;
+	SquadLeader = nullptr;
+	SquadOrder = ESquadOrder::Charge;
+	NextChoreTime = -1.0f;
+	Target = nullptr;
+
+	Castle->SoldierReturned(RosterId, bFought);
+
+	bFought = false;
+}
+
+void ACombatSoldierAIController::ReportDeath()
+{
+	AGesithCastle* Castle = HomeCastle.Get();
+
+	if (bReportedDeath || !Castle)
+	{
+		return;
+	}
+
+	bReportedDeath = true;
+
+	const FSoldierRecord* Record = Castle->Roster.FindByPredicate([this](const FSoldierRecord& Soldier) { return Soldier.Id == RosterId; });
+
+#if !UE_BUILD_SHIPPING
+	if (GEngine && Record)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Orange, FString::Printf(TEXT("%s was killed"), *Record->Name));
+	}
+#endif
+
+	Castle->SoldierFell(RosterId);
+}
+
 void ACombatSoldierAIController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
 	ACombatCharacter* Soldier = Cast<ACombatCharacter>(GetPawn());
 
-	if (!Soldier || Soldier->IsDead())
+	if (!Soldier)
 	{
+		return;
+	}
+
+	if (Soldier->IsDead())
+	{
+		ReportDeath();
+
 		return;
 	}
 
@@ -53,6 +132,15 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 	}
 
 	ACombatCharacter* Leader = SquadLeader.Get();
+
+	// castle soldiers whose lord is gone walk home on their own
+	if (bInSquad && !Leader)
+	{
+		ReturnToPost();
+	}
+
+	AGesithCastle* Castle = HomeCastle.Get();
+	const bool bAtCastle = Castle && !bInSquad;
 
 	// soldiers whose leader is gone just charge
 	ESquadOrder Order = SquadOrder;
@@ -83,6 +171,28 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 		EngageCenter = Leader->GetActorLocation();
 		EngageRange = FollowEngageRange;
 	}
+	else if (bAtCastle)
+	{
+		bool bTraining = false;
+		Castle->GetSoldierPost(RosterId, Slot, SlotForward, bTraining);
+
+		// soldiers off duty wander between chores, the ones in training stay at the training ground
+		if (!bTraining)
+		{
+			if (NextChoreTime < 0.0f || Now >= NextChoreTime)
+			{
+				Castle->PickChoreSpot(ChoreLocation, ChoreForward);
+				NextChoreTime = Now + FMath::FRandRange(MinChoreTime, MaxChoreTime);
+			}
+
+			Slot = ChoreLocation;
+			SlotForward = ChoreForward;
+		}
+
+		// castle soldiers defend wherever they are
+		EngageCenter = Slot;
+		EngageRange = HoldEngageRange;
+	}
 	else if (Order == ESquadOrder::Hold)
 	{
 		SlotForward = HoldForward;
@@ -101,7 +211,23 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 
 	if (Target.IsValid())
 	{
+		bFought = true;
+
 		FightTarget(Soldier, DeltaTime, Now);
+	}
+	else if (bAtCastle)
+	{
+		const bool bAtPost = MoveToSlot(Soldier, Slot, SlotForward, DeltaTime, StrollSpeed);
+
+		// soldiers at the training ground practice their swings
+		const FSoldierRecord* Record = Castle->Roster.FindByPredicate([this](const FSoldierRecord& Other) { return Other.Id == RosterId; });
+
+		if (bAtPost && Record && Record->bTraining && Now >= NextDrillTime)
+		{
+			Soldier->DoComboAttackStart();
+
+			NextDrillTime = Now + FMath::FRandRange(MinDrillInterval, MaxDrillInterval);
+		}
 	}
 	else if (Order != ESquadOrder::Charge)
 	{
@@ -119,7 +245,8 @@ void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float De
 
 	if (ToTarget.Size2D() > AttackRange)
 	{
-		// walk straight at the target
+		// walk straight at the target, facing it
+		Soldier->SetActorRotation(FMath::RInterpTo(Soldier->GetActorRotation(), LookRotation, DeltaTime, TurnSpeed));
 		Soldier->AddMovementInput(ToTarget.GetSafeNormal2D(), 1.0f);
 
 		return;
@@ -151,19 +278,23 @@ void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float De
 	}
 }
 
-void ACombatSoldierAIController::MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime)
+bool ACombatSoldierAIController::MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime, float SpeedScale)
 {
 	const FVector ToSlot = Slot - Soldier->GetActorLocation();
 	const float Distance = ToSlot.Size2D();
 
 	if (Distance > SlotTolerance)
 	{
-		SetControlRotation(FRotator(0.0f, ToSlot.Rotation().Yaw, 0.0f));
+		const FRotator MoveRotation(0.0f, ToSlot.Rotation().Yaw, 0.0f);
+
+		// the character doesn't turn on its own, so face the way it walks
+		SetControlRotation(MoveRotation);
+		Soldier->SetActorRotation(FMath::RInterpTo(Soldier->GetActorRotation(), MoveRotation, DeltaTime, TurnSpeed));
 
 		// slow down near the slot so soldiers don't overshoot and wobble
-		Soldier->AddMovementInput(ToSlot.GetSafeNormal2D(), FMath::Clamp(Distance / 300.0f, 0.3f, 1.0f));
+		Soldier->AddMovementInput(ToSlot.GetSafeNormal2D(), SpeedScale * FMath::Clamp(Distance / 300.0f, 0.3f, 1.0f));
 
-		return;
+		return false;
 	}
 
 	// stand in line facing the same way as the formation
@@ -171,11 +302,17 @@ void ACombatSoldierAIController::MoveToSlot(ACombatCharacter* Soldier, const FVe
 
 	SetControlRotation(FormationRotation);
 	Soldier->SetActorRotation(FMath::RInterpTo(Soldier->GetActorRotation(), FormationRotation, DeltaTime, 5.0f));
+
+	return true;
 }
 
 void ACombatSoldierAIController::JoinSquad(ACombatCharacter* Leader)
 {
 	SquadLeader = Leader;
+
+	// castle soldiers stay on the roster while they're away
+	bInSquad = HomeCastle.IsValid();
+	bFought = false;
 }
 
 void ACombatSoldierAIController::SetSquadOrder(ESquadOrder NewOrder, int32 NewIndex, int32 NewCount, const FVector& Origin, const FVector& Forward)

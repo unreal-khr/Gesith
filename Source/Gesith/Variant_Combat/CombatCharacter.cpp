@@ -19,6 +19,7 @@
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "CombatSoldierAIController.h"
+#include "GesithCastle.h"
 
 ACombatCharacter::ACombatCharacter()
 {
@@ -294,7 +295,15 @@ void ACombatCharacter::ServerClearBattle_Implementation()
 #if !UE_BUILD_SHIPPING
 	for (TActorIterator<ACombatCharacter> It(GetWorld()); It; ++It)
 	{
-		if (Cast<ACombatSoldierAIController>(It->GetController()) || (!It->IsPlayerControlled() && It->TeamId != 0))
+		const ACombatSoldierAIController* SoldierAI = Cast<ACombatSoldierAIController>(It->GetController());
+
+		// castle soldiers belong to the roster, not the test battle
+		if (SoldierAI && SoldierAI->GetHomeCastle())
+		{
+			continue;
+		}
+
+		if (SoldierAI || (!It->IsPlayerControlled() && It->TeamId != 0))
 		{
 			It->Destroy();
 		}
@@ -319,6 +328,93 @@ void ACombatCharacter::ServerSpawnSquad_Implementation(int32 SquadSize)
 #if !UE_BUILD_SHIPPING
 	SquadSize = FMath::Clamp(SquadSize, 1, 50);
 
+	SpawnSquadMembers(SquadSize);
+
+	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
+
+	ShowCombatDebugMessage(FString::Printf(TEXT("Squad of %d is following you. F1 Follow, F2 Hold, F3 Charge"), Count), FColor::Green);
+#endif
+}
+
+void ACombatCharacter::MusterFromCastle(AGesithCastle* Castle)
+{
+	if (!HasAuthority() || !Castle)
+	{
+		return;
+	}
+
+	// the lord fights on the castle's side
+	if (TeamId != Castle->TeamId)
+	{
+		SetTeam(Castle->TeamId);
+	}
+
+	const TArray<FSoldierRecord> Records = Castle->MusterSoldiers();
+
+	for (const FSoldierRecord& Record : Records)
+	{
+		ACombatCharacter* Soldier = Castle->GetSoldierPawn(Record.Id);
+		ACombatSoldierAIController* SoldierAI = Soldier ? Cast<ACombatSoldierAIController>(Soldier->GetController()) : nullptr;
+
+		// soldiers without a character right now stay home
+		if (!SoldierAI || Soldier->IsDead())
+		{
+			Castle->SoldierReturned(Record.Id, false);
+			continue;
+		}
+
+		// stats may have grown at the training ground since the character was made
+		SoldierAI->SetRosterSoldier(Castle, Record);
+		SoldierAI->JoinSquad(this);
+	}
+
+	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
+
+	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers summoned. F1 Follow, F2 Hold, F3 Charge"), Count), FColor::Green);
+}
+
+void ACombatCharacter::DismissToCastle(AGesithCastle* Castle)
+{
+	if (!HasAuthority() || !Castle)
+	{
+		return;
+	}
+
+	int32 Count = 0;
+
+	for (TActorIterator<ACombatSoldierAIController> It(GetWorld()); It; ++It)
+	{
+		if (It->GetSquadLeader() == this && It->GetHomeCastle() == Castle)
+		{
+			It->ReturnToPost();
+			++Count;
+		}
+	}
+
+	ShowCombatDebugMessage(FString::Printf(TEXT("%d soldiers dismissed and went back to their posts"), Count), FColor::Green);
+}
+
+void ACombatCharacter::ApplySoldierStats(float Health, float Strength)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// start from the class defaults so applying stats again after training doesn't stack
+	const ACombatCharacter* Defaults = GetClass()->GetDefaultObject<ACombatCharacter>();
+
+	// a fresh recruit (10) fights like the base character, the stat cap (100) is much tougher
+	MaxHP = Defaults->MaxHP * (0.5f + Health / 20.0f);
+	MeleeDamage = Defaults->MeleeDamage * (0.5f + Strength / 20.0f);
+
+	ResetHP();
+}
+
+TArray<ACombatCharacter*> ACombatCharacter::SpawnSquadMembers(int32 SquadSize)
+{
+	TArray<ACombatCharacter*> Soldiers;
+
 	// a squad needs a side to fight for
 	if (TeamId == 0)
 	{
@@ -333,19 +429,21 @@ void ACombatCharacter::ServerSpawnSquad_Implementation(int32 SquadSize)
 	{
 		const FVector Location = GetActorLocation() - Forward * (300.0f + (Index / 5) * BattleLineSpacing) + Right * ((Index % 5 - 2) * BattleLineSpacing);
 
-		if (ACombatCharacter* Soldier = SpawnSoldier(Location, Forward.Rotation(), TeamId))
+		ACombatCharacter* Soldier = SpawnSoldier(Location, Forward.Rotation(), TeamId);
+		ACombatSoldierAIController* SoldierAI = Soldier ? Cast<ACombatSoldierAIController>(Soldier->GetController()) : nullptr;
+
+		if (SoldierAI)
 		{
-			if (ACombatSoldierAIController* SoldierAI = Cast<ACombatSoldierAIController>(Soldier->GetController()))
-			{
-				SoldierAI->JoinSquad(this);
-			}
+			SoldierAI->JoinSquad(this);
+			Soldiers.Add(Soldier);
+		}
+		else if (Soldier)
+		{
+			Soldier->Destroy();
 		}
 	}
 
-	const int32 Count = ACombatSoldierAIController::OrderSquad(this, ESquadOrder::Follow);
-
-	ShowCombatDebugMessage(FString::Printf(TEXT("Squad of %d is following you. 1 Follow, 2 Hold, 3 Charge"), Count), FColor::Green);
-#endif
+	return Soldiers;
 }
 
 void ACombatCharacter::SpawnEnemies(int32 EnemyCount)
@@ -1086,6 +1184,7 @@ void ACombatCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ACombatCharacter, CurrentHP);
+	DOREPLIFETIME(ACombatCharacter, MaxHP);
 
 	DOREPLIFETIME(ACombatCharacter, bIsBlocking);
 	DOREPLIFETIME(ACombatCharacter, TeamId);

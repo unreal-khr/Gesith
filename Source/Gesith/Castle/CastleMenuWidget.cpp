@@ -61,8 +61,11 @@ void UCastleSoldierRow::Setup(UCastleMenuWidget* InMenu, const FSoldierRecord& S
 	OneDecimal.MinimumFractionalDigits = 1;
 	OneDecimal.MaximumFractionalDigits = 1;
 
+	// summoned soldiers say so after their name
+	const FText Status = Soldier.bInField ? LOCTEXT("InField", " (소집 중)") : FText::GetEmpty();
+
 	InfoText->SetText(FText::Format(
-		LOCTEXT("SoldierInfo", "{0}  [{1}]   체력 {2}  힘 {3}  지구력 {4}  공속 {5}  숙련 {6}   평균 {7} / {8}"),
+		LOCTEXT("SoldierInfo", "{0}{9}  [{1}]   체력 {2}  힘 {3}  지구력 {4}  공속 {5}  숙련 {6}   평균 {7} / {8}"),
 		FText::FromString(Soldier.Name),
 		AGesithCastle::GetRankName(Soldier.Rank),
 		FText::AsNumber(Soldier.Health, &OneDecimal),
@@ -71,7 +74,10 @@ void UCastleSoldierRow::Setup(UCastleMenuWidget* InMenu, const FSoldierRecord& S
 		FText::AsNumber(Soldier.AttackSpeed, &OneDecimal),
 		FText::AsNumber(Soldier.WeaponSkill, &OneDecimal),
 		FText::AsNumber(Soldier.GetAverageStat(), &OneDecimal),
-		Promotion));
+		Promotion,
+		Status));
+
+	TrainButton->SetIsEnabled(Soldier.IsAvailable() || bTraining);
 
 	TrainButtonText->SetText(bTraining ? LOCTEXT("StopTraining", "훈련 중 (멈추기)") : LOCTEXT("StartTraining", "훈련 보내기"));
 
@@ -154,10 +160,27 @@ void UCastleMenuWidget::NativeOnInitialized()
 	RecruitButtonText = RecruitLabel;
 	RecruitButton->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandleRecruitClicked);
 
-	if (UVerticalBoxSlot* RecruitSlot = Content->AddChildToVerticalBox(RecruitButton))
+	UTextBlock* MusterLabel = nullptr;
+
+	MusterButton = MakeButton(this, FText::GetEmpty(), MusterLabel);
+	MusterButtonText = MusterLabel;
+	MusterButton->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandleMusterClicked);
+
+	UTextBlock* DismissLabel = nullptr;
+
+	DismissButton = MakeButton(this, LOCTEXT("Dismiss", "소집 해제"), DismissLabel);
+	DismissButton->OnClicked.AddDynamic(this, &UCastleMenuWidget::HandleDismissClicked);
+
+	// recruiting, summoning and dismissing sit side by side
+	UHorizontalBox* ActionBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+	ActionBox->AddChildToHorizontalBox(RecruitButton);
+	ActionBox->AddChildToHorizontalBox(MusterButton)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+	ActionBox->AddChildToHorizontalBox(DismissButton)->SetPadding(FMargin(8.0f, 0.0f, 0.0f, 0.0f));
+
+	if (UVerticalBoxSlot* ActionSlot = Content->AddChildToVerticalBox(ActionBox))
 	{
-		RecruitSlot->SetPadding(FMargin(0.0f, 10.0f));
-		RecruitSlot->SetHorizontalAlignment(HAlign_Left);
+		ActionSlot->SetPadding(FMargin(0.0f, 10.0f));
+		ActionSlot->SetHorizontalAlignment(HAlign_Left);
 	}
 
 	// the roster scrolls once it gets long
@@ -238,6 +261,12 @@ void UCastleMenuWidget::Refresh()
 	RecruitButtonText->SetText(FText::Format(LOCTEXT("Recruit", "병사 모집 (금 {0})"), FText::AsNumber(Castle->GetRecruitCost())));
 	RecruitButton->SetIsEnabled(Castle->Gold >= Castle->GetRecruitCost());
 
+	const int32 Available = Castle->GetAvailableCount();
+
+	MusterButtonText->SetText(FText::Format(LOCTEXT("Muster", "병사 소집 ({0}명)"), FText::AsNumber(Available)));
+	MusterButton->SetIsEnabled(Available > 0);
+	DismissButton->SetIsEnabled(Castle->HasSoldiersInField());
+
 	// rebuild the roster rows
 	RosterBox->ClearChildren();
 
@@ -258,6 +287,22 @@ void UCastleMenuWidget::HandleRecruitClicked()
 	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
 	{
 		PC->ServerCastleRecruit(Castle.Get());
+	}
+}
+
+void UCastleMenuWidget::HandleMusterClicked()
+{
+	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
+	{
+		PC->ServerCastleMuster(Castle.Get());
+	}
+}
+
+void UCastleMenuWidget::HandleDismissClicked()
+{
+	if (ACombatPlayerController* PC = GetOwningPlayer<ACombatPlayerController>())
+	{
+		PC->ServerCastleDismiss(Castle.Get());
 	}
 }
 

@@ -9,6 +9,7 @@
 
 class UBoxComponent;
 class UStaticMeshComponent;
+class ACombatCharacter;
 
 DECLARE_MULTICAST_DELEGATE(FOnCastleChanged);
 
@@ -43,6 +44,13 @@ class AGesithCastle : public AActor
 	UPROPERTY(VisibleAnywhere, Category="Components")
 	UStaticMeshComponent* FrontRightWall;
 
+	/** Grey box stand-ins for the places soldiers visit in their free time */
+	UPROPERTY(VisibleAnywhere, Category="Components")
+	UStaticMeshComponent* Blacksmith;
+
+	UPROPERTY(VisibleAnywhere, Category="Components")
+	UStaticMeshComponent* Well;
+
 public:
 
 	/** Castle name shown in the menu */
@@ -72,6 +80,14 @@ public:
 	/** Soldiers belonging to this castle */
 	UPROPERTY(VisibleAnywhere, ReplicatedUsing=OnRep_CastleChanged, Category="Castle")
 	TArray<FSoldierRecord> Roster;
+
+	/** Team the castle's soldiers fight for */
+	UPROPERTY(EditAnywhere, Category="Castle")
+	int32 TeamId = 1;
+
+	/** Character spawned for each soldier. If empty, the first player's character class is used */
+	UPROPERTY(EditAnywhere, Category="Castle")
+	TSubclassOf<ACombatCharacter> SoldierClass;
 
 	/** Broadcast on every machine whenever anything shown in the castle menu changes */
 	FOnCastleChanged OnCastleChanged;
@@ -146,6 +162,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Castle|Training", meta = (ClampMin = 1))
 	float StatCap = 100.0f;
 
+	/** Stat points gained in strength and weapon skill for coming back from a fight, before slowing down near the cap */
+	UPROPERTY(EditAnywhere, Category="Castle|Battle", meta = (ClampMin = 0))
+	float BattleGain = 1.0f;
+
 	/** Average stat needed to promote into each rank after recruit */
 	UPROPERTY(EditAnywhere, Category="Castle|Training")
 	TArray<float> PromotionThresholds;
@@ -158,6 +178,12 @@ protected:
 
 	/** Id given to the next recruited soldier */
 	int32 NextSoldierId = 1;
+
+	/** Character of each soldier in the roster, by soldier id. Server only */
+	TMap<int32, TWeakObjectPtr<ACombatCharacter>> SoldierPawns;
+
+	/** Time until the soldier characters are checked against the roster again */
+	float PawnSyncTimer = 0.0f;
 
 public:
 
@@ -197,6 +223,30 @@ public:
 	/** Returns the gold it costs to recruit a soldier */
 	int32 GetRecruitCost() const { return RecruitCost; }
 
+	/** Returns how many soldiers are in the castle */
+	int32 GetAvailableCount() const;
+
+	/** Summons every soldier in the castle to follow a lord and returns them. Server only */
+	TArray<FSoldierRecord> MusterSoldiers();
+
+	/** A summoned soldier was dismissed and goes back to their post. Soldiers who fought get a little stronger. Server only */
+	void SoldierReturned(int32 SoldierId, bool bFought);
+
+	/** Returns true if any soldier is currently summoned */
+	bool HasSoldiersInField() const;
+
+	/** Returns the character of a soldier in the roster, or nullptr. Server only */
+	ACombatCharacter* GetSoldierPawn(int32 SoldierId) const;
+
+	/** Picks a random place for an off duty soldier to spend time: resting at the barracks, the blacksmith, the well, or a stroll */
+	void PickChoreSpot(FVector& OutLocation, FVector& OutForward) const;
+
+	/** Finds where a soldier stands while in the castle: the barracks, or the training ground while training. Returns false if the soldier isn't in the roster */
+	bool GetSoldierPost(int32 SoldierId, FVector& OutLocation, FVector& OutForward, bool& bOutTraining) const;
+
+	/** A soldier died in battle and is gone from the roster for good. Server only */
+	void SoldierFell(int32 SoldierId);
+
 	/** Returns the localized name of a rank */
 	static FText GetRankName(ESoldierRank Rank);
 
@@ -214,8 +264,18 @@ protected:
 	/** Raises the stats of every soldier in training */
 	void RunTrainingSession();
 
+	/** Centers of the blacksmith and the well, relative to the castle */
+	FVector GetBlacksmithCenter() const;
+	FVector GetWellCenter() const;
+
 	/** Removes one random soldier from the roster */
 	void DesertOne();
+
+	/** Spawns characters for soldiers that don't have one and removes characters of soldiers who left the roster */
+	void SyncSoldierPawns();
+
+	/** Returns the class used for soldier characters, or nullptr if none is known yet */
+	UClass* FindSoldierClass() const;
 
 	/** Returns the soldier with the provided id, or nullptr */
 	FSoldierRecord* FindSoldier(int32 SoldierId);
