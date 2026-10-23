@@ -18,13 +18,15 @@ public class Gesith : ModuleRules
 			"StateTreeModule",
 			"GameplayStateTreeModule",
 			"UMG",
-			"Slate"
+			"Slate",
+			"SlateCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 
 		PublicIncludePaths.AddRange(new string[] {
 			"Gesith",
+			"Gesith/Castle",
 			"Gesith/Variant_Platforming",
 			"Gesith/Variant_Platforming/Animation",
 			"Gesith/Variant_Combat",
