@@ -34,6 +34,7 @@ public class Gesith : ModuleRules
 			"Gesith/Variant_Combat/Animation",
 			"Gesith/Variant_Combat/Gameplay",
 			"Gesith/Variant_Combat/Interfaces",
+			"Gesith/Variant_Combat/Weapons",
 			"Gesith/Variant_Combat/UI",
 			"Gesith/Variant_SideScrolling",
 			"Gesith/Variant_SideScrolling/AI",

@@ -36,7 +36,7 @@ void ACombatSoldierAIController::SetRosterSoldier(AGesithCastle* Castle, const F
 
 	if (ACombatCharacter* Soldier = Cast<ACombatCharacter>(GetPawn()))
 	{
-		Soldier->ApplySoldierStats(Record.Health, Record.Strength);
+		Soldier->ApplySoldierStats(Record);
 	}
 
 	// start from the class defaults so applying stats again after training doesn't stack
@@ -47,7 +47,8 @@ void ACombatSoldierAIController::SetRosterSoldier(AGesithCastle* Castle, const F
 	MinAttackInterval = Defaults->MinAttackInterval * SpeedFactor;
 	MaxAttackInterval = Defaults->MaxAttackInterval * SpeedFactor;
 
-	// skilled soldiers read attacks better
+	// skilled soldiers read attacks better and aim better
+	WeaponSkill = Record.WeaponSkill;
 	GuardChance = FMath::Clamp(0.3f + Record.WeaponSkill * 0.005f, 0.0f, 0.8f);
 }
 
@@ -156,6 +157,9 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 	FVector EngageCenter = Soldier->GetActorLocation();
 	float EngageRange = TNumericLimits<float>::Max();
 
+	// archers with their bows out reach farther than infantry
+	const float RangedReach = Soldier->IsArcher() && !IsSidearmOrder() ? BowRange : 0.0f;
+
 	if (Order == ESquadOrder::Follow)
 	{
 		// turn the formation only while the leader walks, so looking around doesn't send soldiers running
@@ -169,7 +173,7 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 		SlotForward = FollowForward;
 		Slot = GetFormationSlot(Leader->GetActorLocation() - SlotForward * FollowDistance, SlotForward);
 		EngageCenter = Leader->GetActorLocation();
-		EngageRange = FollowEngageRange;
+		EngageRange = FMath::Max(FollowEngageRange, RangedReach);
 	}
 	else if (bAtCastle)
 	{
@@ -198,7 +202,7 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 		SlotForward = HoldForward;
 		Slot = GetFormationSlot(HoldOrigin, HoldForward);
 		EngageCenter = Slot;
-		EngageRange = HoldEngageRange;
+		EngageRange = FMath::Max(HoldEngageRange, RangedReach);
 	}
 
 	// look for the nearest enemy every so often, or right away if the target died
@@ -222,7 +226,10 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 		// soldiers at the training ground practice their swings
 		const FSoldierRecord* Record = Castle->Roster.FindByPredicate([this](const FSoldierRecord& Other) { return Other.Id == RosterId; });
 
-		if (bAtPost && Record && Record->bTraining && Now >= NextDrillTime)
+		// bows go away inside the castle
+		const bool bMeleeInHand = UseWeapon(Soldier, false);
+
+		if (bAtPost && bMeleeInHand && Record && Record->bTraining && Now >= NextDrillTime)
 		{
 			Soldier->DoComboAttackStart();
 
@@ -235,6 +242,31 @@ void ACombatSoldierAIController::Tick(float DeltaTime)
 	}
 }
 
+bool ACombatSoldierAIController::IsSidearmOrder() const
+{
+	const ACombatCharacter* Leader = SquadLeader.Get();
+
+	return Leader && Leader->IsSquadSidearms();
+}
+
+bool ACombatSoldierAIController::UseWeapon(ACombatCharacter* Soldier, bool bRanged) const
+{
+	if (Soldier->GetCurrentWeaponStats().bRanged == bRanged)
+	{
+		return true;
+	}
+
+	const int32 Slot = Soldier->FindWeaponSlot(bRanged);
+
+	// the swap can be refused mid swing, it's tried again next tick
+	if (Slot >= 0)
+	{
+		Soldier->SelectWeaponSlot(Slot);
+	}
+
+	return false;
+}
+
 void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float DeltaTime, float Now)
 {
 	const FVector ToTarget = Target->GetActorLocation() - Soldier->GetActorLocation();
@@ -243,7 +275,28 @@ void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float De
 	// face the target
 	SetControlRotation(LookRotation);
 
-	if (ToTarget.Size2D() > AttackRange)
+	// archers shoot until the enemy gets close or the arrows run out, unless ordered to fight with their sidearms
+	const bool bWantsBow = Soldier->IsArcher() && !IsSidearmOrder() && Soldier->GetArrows() > 0 && ToTarget.Size2D() > BowMinRange;
+
+	if (bWantsBow)
+	{
+		if (UseWeapon(Soldier, true))
+		{
+			ShootTarget(Soldier, DeltaTime, Now);
+		}
+
+		return;
+	}
+
+	// a drawn bow is lowered before switching to the sidearm
+	Soldier->CancelDraw();
+
+	UseWeapon(Soldier, false);
+
+	// longer weapons swing from farther away
+	const float Range = AttackRange + FMath::Max(Soldier->GetCurrentWeaponStats().Reach - 75.0f, 0.0f);
+
+	if (ToTarget.Size2D() > Range)
 	{
 		// walk straight at the target, facing it
 		Soldier->SetActorRotation(FMath::RInterpTo(Soldier->GetActorRotation(), LookRotation, DeltaTime, TurnSpeed));
@@ -276,6 +329,52 @@ void ACombatSoldierAIController::FightTarget(ACombatCharacter* Soldier, float De
 
 		NextAttackTime = Now + FMath::FRandRange(MinAttackInterval, MaxAttackInterval);
 	}
+}
+
+void ACombatSoldierAIController::ShootTarget(ACombatCharacter* Soldier, float DeltaTime, float Now)
+{
+	const FVector ToTarget = Target->GetActorLocation() - Soldier->GetActorLocation();
+	const float Distance = ToTarget.Size2D();
+	const FRotator LookRotation(0.0f, ToTarget.Rotation().Yaw, 0.0f);
+
+	Soldier->SetActorRotation(FMath::RInterpTo(Soldier->GetActorRotation(), LookRotation, DeltaTime, 10.0f));
+
+	// walk closer while out of range
+	if (Distance > BowRange)
+	{
+		Soldier->AddMovementInput(ToTarget.GetSafeNormal2D(), 1.0f);
+	}
+
+	if (!Soldier->IsDrawingBow())
+	{
+		if (Now >= NextAttackTime)
+		{
+			Soldier->DoComboAttackStart();
+		}
+
+		return;
+	}
+
+	// shoot at full draw
+	if (Soldier->GetDrawFraction() < 1.0f)
+	{
+		return;
+	}
+
+	const FGesithWeaponStats& Bow = Soldier->GetCurrentWeaponStats();
+	const float FlightTime = Distance / FMath::Max(Bow.ArrowSpeed, 1.0f);
+
+	// lead moving targets and aim above them to make up for the drop
+	FVector AimPoint = Target->GetActorLocation() + Target->GetVelocity() * FlightTime;
+	AimPoint.Z += 0.5f * 490.0f * FMath::Square(FlightTime);
+
+	// skilled archers miss by less
+	const float Spread = Distance * BowSpread * FMath::Clamp(1.0f - (WeaponSkill - 10.0f) / 120.0f, 0.25f, 1.0f);
+	AimPoint += FMath::VRand() * FMath::FRandRange(0.0f, Spread);
+
+	Soldier->ReleaseBowAt(AimPoint);
+
+	NextAttackTime = Now + FMath::FRandRange(MinAttackInterval, MaxAttackInterval);
 }
 
 bool ACombatSoldierAIController::MoveToSlot(ACombatCharacter* Soldier, const FVector& Slot, const FVector& Forward, float DeltaTime, float SpeedScale)

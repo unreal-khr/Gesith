@@ -20,6 +20,7 @@
 #include "Engine/Engine.h"
 #include "CombatSoldierAIController.h"
 #include "GameFramework/PlayerState.h"
+#include "WeaponHUDWidget.h"
 
 void ACombatPlayerController::BeginPlay()
 {
@@ -42,6 +43,17 @@ void ACombatPlayerController::BeginPlay()
 
 		}
 
+	}
+
+	// the weapon bar is built in C++, so it needs no widget asset
+	if (IsLocalPlayerController())
+	{
+		WeaponHUDWidget = CreateWidget<UWeaponHUDWidget>(this, UWeaponHUDWidget::StaticClass());
+
+		if (WeaponHUDWidget)
+		{
+			WeaponHUDWidget->AddToPlayerScreen(0);
+		}
 	}
 }
 
@@ -82,6 +94,15 @@ void ACombatPlayerController::SetupInputComponent()
 				SquadFollowAction = NewObject<UInputAction>(this);
 				SquadHoldAction = NewObject<UInputAction>(this);
 				SquadChargeAction = NewObject<UInputAction>(this);
+				SquadSidearmAction = NewObject<UInputAction>(this);
+			}
+
+			if (WeaponSlotActions.IsEmpty())
+			{
+				for (int32 Index = 0; Index < WeaponSlotKeys.Num(); ++Index)
+				{
+					WeaponSlotActions.Add(NewObject<UInputAction>(this));
+				}
 			}
 
 			if (!CastleMappingContext)
@@ -91,6 +112,12 @@ void ACombatPlayerController::SetupInputComponent()
 				CastleMappingContext->MapKey(SquadFollowAction, SquadFollowKey);
 				CastleMappingContext->MapKey(SquadHoldAction, SquadHoldKey);
 				CastleMappingContext->MapKey(SquadChargeAction, SquadChargeKey);
+				CastleMappingContext->MapKey(SquadSidearmAction, SquadSidearmKey);
+
+				for (int32 Index = 0; Index < WeaponSlotActions.Num(); ++Index)
+				{
+					CastleMappingContext->MapKey(WeaponSlotActions[Index], WeaponSlotKeys[Index]);
+				}
 			}
 
 			Subsystem->AddMappingContext(CastleMappingContext, 1);
@@ -104,6 +131,16 @@ void ACombatPlayerController::SetupInputComponent()
 			EnhancedInputComponent->BindAction(SquadFollowAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadFollow);
 			EnhancedInputComponent->BindAction(SquadHoldAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadHold);
 			EnhancedInputComponent->BindAction(SquadChargeAction, ETriggerEvent::Started, this, &ACombatPlayerController::OrderSquadCharge);
+			EnhancedInputComponent->BindAction(SquadSidearmAction, ETriggerEvent::Started, this, &ACombatPlayerController::ToggleSquadSidearms);
+
+			// one handler per slot key, up to four
+			using FSlotHandler = void (ACombatPlayerController::*)();
+			const FSlotHandler SlotHandlers[] = { &ACombatPlayerController::SelectWeapon1, &ACombatPlayerController::SelectWeapon2, &ACombatPlayerController::SelectWeapon3, &ACombatPlayerController::SelectWeapon4 };
+
+			for (int32 Index = 0; Index < FMath::Min(WeaponSlotActions.Num(), 4); ++Index)
+			{
+				EnhancedInputComponent->BindAction(WeaponSlotActions[Index], ETriggerEvent::Started, this, SlotHandlers[Index]);
+			}
 		}
 		else
 		{
@@ -125,6 +162,69 @@ void ACombatPlayerController::OrderSquadHold()
 void ACombatPlayerController::OrderSquadCharge()
 {
 	GiveSquadOrder(ESquadOrder::Charge);
+}
+
+void ACombatPlayerController::ToggleSquadSidearms()
+{
+	const ACombatCharacter* Leader = Cast<ACombatCharacter>(GetPawn());
+
+	if (!Leader)
+	{
+		return;
+	}
+
+	const bool bSidearms = !Leader->IsSquadSidearms();
+
+#if !UE_BUILD_SHIPPING
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, bSidearms ? TEXT("Archers: Sidearms") : TEXT("Archers: Bows, sidearms up close"));
+	}
+#endif
+
+	ServerSquadSidearms(bSidearms);
+}
+
+void ACombatPlayerController::ServerSquadSidearms_Implementation(bool bSidearms)
+{
+	if (ACombatCharacter* Leader = Cast<ACombatCharacter>(GetPawn()))
+	{
+		Leader->SetSquadSidearms(bSidearms);
+	}
+}
+
+void ACombatPlayerController::SelectWeapon1()
+{
+	SelectWeapon(0);
+}
+
+void ACombatPlayerController::SelectWeapon2()
+{
+	SelectWeapon(1);
+}
+
+void ACombatPlayerController::SelectWeapon3()
+{
+	SelectWeapon(2);
+}
+
+void ACombatPlayerController::SelectWeapon4()
+{
+	SelectWeapon(3);
+}
+
+void ACombatPlayerController::SelectWeapon(int32 Slot)
+{
+	// no weapon swaps while the castle menu has the mouse
+	if (CastleMenuWidget)
+	{
+		return;
+	}
+
+	if (ACombatCharacter* CombatCharacter = Cast<ACombatCharacter>(GetPawn()))
+	{
+		CombatCharacter->SelectWeaponSlot(Slot);
+	}
 }
 
 void ACombatPlayerController::GiveSquadOrder(ESquadOrder Order)
